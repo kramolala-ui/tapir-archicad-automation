@@ -1,6 +1,6 @@
 // IFCExportCommands.cpp
 #include "IFCExportCommands.hpp"
-#include "APIdefs_Goodies.h"
+#include "MigrationHelper.hpp"
 #include "ACAPinc.h"
 
 ExportFilteredIFCCommand::ExportFilteredIFCCommand()
@@ -17,9 +17,7 @@ GS::Optional<GS::UniString> ExportFilteredIFCCommand::GetInputParametersSchema()
                 "type": "array",
                 "items": {
                     "type": "object",
-                    "properties": {
-                        "guid": { "type": "string" }
-                    },
+                    "properties": { "guid": { "type": "string" } },
                     "required": ["guid"]
                 }
             },
@@ -42,38 +40,44 @@ GS::ObjectState ExportFilteredIFCCommand::Execute(const GS::ObjectState& paramet
     parameters.Get("elementGuids", elementGuids);
     parameters.Get("translatorName", translatorName);
 
-    // Формируем параметры экспорта для Archicad 26+
-    API_IFCExportParams exportParams = {};
-    exportParams.filePath = filePath;
+    // 1. Сохраняем список всех элементов для последующего восстановления
+    GS::Array<API_Guid> allElemGuids;
+    ACAPI_Element_GetElemList(API_ZombieElemID, &allElemGuids);
 
-    // Устанавливаем транслятор, если указан
-    if (!translatorName.IsEmpty()) {
-        // Получаем список доступных трансляторов и ищем нужный
-        GS::Array<API_IFCTranslatorIdentifier> translators;
-        if (ACAPI_IFC_GetIFCExportTranslatorsList(translators) == NoError) {
-            for (const auto& translator : translators) {
-                if (translator.name == translatorName) {
-                    exportParams.translatorIdentifier = translator;
-                    break;
-                }
-            }
-        }
-    }
+    // 2. Скрываем все элементы
+    for (const auto& g : allElemGuids)
+        ACAPI_Element_Hide(g, true);
 
-    // Фильтр элементов: экспортируем только указанные GUID
+    // 3. Показываем только указанные элементы
     GS::Array<API_Guid> filterGuids;
     for (const auto& item : elementGuids) {
         GS::String guidStr;
         if (item.Get("guid", guidStr)) {
             API_Guid guid = APIGuidFromString(guidStr.ToCStr());
-            if (guid != APINULLGuid)
+            if (guid != APINULLGuid) {
+                ACAPI_Element_Hide(guid, false);
                 filterGuids.Push(guid);
+            }
         }
     }
-    if (!filterGuids.IsEmpty())
-        exportParams.elementsToExport = filterGuids;  // поле для выборочного экспорта
 
-    GSErrCode err = ACAPI_IFC_Export(exportParams);
+    // 4. Выполняем экспорт IFC с настройкой "Видимые элементы"
+    API_SavePars_Ifc savePars = {};
+    savePars.subType = APISaveIfc_Export;
+    savePars.file = new IO::Location(filePath);
+    if (!translatorName.IsEmpty())
+        savePars.translatorName = new GS::UniString(translatorName);
+    savePars.exportVisibleOnly = true;   // ключевой параметр
+
+    GSErrCode err = ACAPI_IFC_SaveProject(&savePars);
+
+    // 5. Восстанавливаем видимость всех элементов
+    for (const auto& g : allElemGuids)
+        ACAPI_Element_Hide(g, false);
+
+    delete savePars.file;
+    delete savePars.translatorName;
+
     return err == NoError
         ? CreateSuccessfulExecutionResult()
         : CreateFailedExecutionResult(err, "Failed to export filtered IFC");
