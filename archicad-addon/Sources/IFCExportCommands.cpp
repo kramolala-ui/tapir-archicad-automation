@@ -42,30 +42,39 @@ GS::ObjectState ExportFilteredIFCCommand::Execute(const GS::ObjectState& paramet
     parameters.Get("elementGuids", elementGuids);
     parameters.Get("translatorName", translatorName);
 
-    API_SavePars_Ifc savePars = {};
-    savePars.subType = APISaveIfc_Export;
-    savePars.file = new IO::Location(filePath);
-    if (!translatorName.IsEmpty())
-        savePars.translatorName = new GS::UniString(translatorName);
+    // Формируем параметры экспорта для Archicad 26+
+    API_IFCExportParams exportParams = {};
+    exportParams.filePath = filePath;
 
-    // Фильтр: экспортируем только указанные GUID
+    // Устанавливаем транслятор, если указан
+    if (!translatorName.IsEmpty()) {
+        // Получаем список доступных трансляторов и ищем нужный
+        GS::Array<API_IFCTranslatorIdentifier> translators;
+        if (ACAPI_IFC_GetIFCExportTranslatorsList(translators) == NoError) {
+            for (const auto& translator : translators) {
+                if (translator.name == translatorName) {
+                    exportParams.translatorIdentifier = translator;
+                    break;
+                }
+            }
+        }
+    }
+
+    // Фильтр элементов: экспортируем только указанные GUID
     GS::Array<API_Guid> filterGuids;
     for (const auto& item : elementGuids) {
         GS::String guidStr;
-        if (item.Get("guid", guidStr))
-            filterGuids.Push(APIGuidFromString(guidStr.ToCStr()));
+        if (item.Get("guid", guidStr)) {
+            API_Guid guid = APIGuidFromString(guidStr.ToCStr());
+            if (guid != APINULLGuid)
+                filterGuids.Push(guid);
+        }
     }
-    if (!filterGuids.IsEmpty()) {
-        savePars.filter = new API_IfcExportFilter;
-        savePars.filter->elements = filterGuids;
-    }
+    if (!filterGuids.IsEmpty())
+        exportParams.elementsToExport = filterGuids;  // поле для выборочного экспорта
 
-    GSErrCode err = ACAPI_IFC_SaveProject(&savePars);
-    delete savePars.file;
-    delete savePars.translatorName;
-    delete savePars.filter;
-
+    GSErrCode err = ACAPI_IFC_Export(exportParams);
     return err == NoError
         ? CreateSuccessfulExecutionResult()
-        : CreateFailedExecutionResult(err, "Failed to export IFC with filter");
+        : CreateFailedExecutionResult(err, "Failed to export filtered IFC");
 }
