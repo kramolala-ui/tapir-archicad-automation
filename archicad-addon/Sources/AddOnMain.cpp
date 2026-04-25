@@ -205,6 +205,10 @@ GSErrCode Initialize (void)
             projectCommands, "1.2.6",
             "Executes an IFC file operation."
         );
+        err |= RegisterCommand<ExportFilteredIFCCommand>(
+            projectCommands, "1.3.5",
+            "Exports IFC only for the specified elements (by GUID)."
+        );
         err |= RegisterCommand<PrintViewCommand> (
             projectCommands, "1.3.1",
             "Prints from the current view."
