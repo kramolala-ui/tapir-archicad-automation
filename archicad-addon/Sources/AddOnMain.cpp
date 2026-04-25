@@ -11,7 +11,7 @@
 #include "3DCutPlaneCommands.hpp"
 
 
-
+#include "IFCExportCommands.hpp"
 #include "AboutDialog.hpp"
 #include "TapirPalette.hpp"
 #include "VersionChecker.hpp"
