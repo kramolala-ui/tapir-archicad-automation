@@ -11,7 +11,6 @@
 #include "3DCutPlaneCommands.hpp"
 
 
-#include "IFCExportCommands.hpp"
 #include "AboutDialog.hpp"
 #include "TapirPalette.hpp"
 #include "VersionChecker.hpp"
@@ -204,10 +203,6 @@ GSErrCode Initialize (void)
         err |= RegisterCommand<IFCFileOperationCommand> (
             projectCommands, "1.2.6",
             "Executes an IFC file operation."
-        );
-        err |= RegisterCommand<ExportFilteredIFCCommand>(
-            projectCommands, "1.3.5",
-            "Exports IFC only for the specified elements (by GUID)."
         );
         err |= RegisterCommand<PrintViewCommand> (
             projectCommands, "1.3.1",
