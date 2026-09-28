@@ -1,1 +1,1 @@
-work branch test #6 via invalidate
+work branch test #7 debug
