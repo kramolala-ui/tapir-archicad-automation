@@ -1327,6 +1327,15 @@ GSErrCode Initialize (void)
         AddCommandGroup (developerCommands);
     }
 
+    { // Bulk Commands
+        CommandGroup bulkCommands ("Bulk Commands");
+        err |= RegisterCommand<BulkPingCommand> (
+            bulkCommands, "1.0.0",
+            "Test command: base64-decode payload, return size and hex preview. Used to validate the binary transport path before adding msgpack/zstd."
+        );
+        AddCommandGroup (bulkCommands);
+    }
+
     // Loading the palette singleton applies the custom shortcut menu labels and the enabled state
     // of the shortcut menu items at startup, rather than only when the user first opens the
     // palette or triggers a shortcut. It deliberately runs LAST and swallows every failure:
