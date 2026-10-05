@@ -305,6 +305,130 @@ fallback `zstd_static` / `libzstd` / `zstd`.
 
 ---
 
+## 4d. План Bulk.GetPropertyValues (TODO)
+
+**Цель:** получить N×K свойств одним `Execute` — обойти JSON-стену и
+проблему зависания серий (раздел 5, «КРИТИЧНО»).
+
+### Формат команды
+
+**Вход (JSON):**
+```json
+{
+  "payload_b64": "<msgpack+zstd+base64>",
+  "compression": "zstd"
+}
+```
+
+Payload (msgpack-декодируется):
+```python
+{
+  "elements":   ["elem-guid-1", "elem-guid-2", ...],
+  "properties": ["prop-guid-1", "prop-guid-2", ...]
+}
+```
+
+**Выход (JSON):**
+```json
+{
+  "payload_b64": "<msgpack+zstd+base64>",
+  "compression": "zstd",
+  "elements_count": 500,
+  "properties_count": 3000,
+  "values_count": 1500000
+}
+```
+
+Payload (msgpack-декодируется):
+```python
+{
+  "rows": [
+    {"elementId": "...",
+     "propertyValues": [
+       {"propertyId": "...", "value": "..."},
+       ...
+     ]},
+    ...
+  ]
+}
+```
+
+### Логика Execute
+
+1. base64-decode → zstd-decompress → msgpack-decode входа.
+2. Цикл по `properties` **чанками по 20** (безопасный порог —
+   см. раздел 9, `K<=23` — быстрый путь ACAPI):
+   - Внутри чанка — цикл по `elements`, вызов
+     `ACAPI_Element_GetPropertyValuesByGuid(elem, chunk_guids)`.
+   - Если у ACAPI есть batch-версия без порога 24 (см. ниже) —
+     использовать её.
+   - Аккумулировать результат.
+3. Собрать msgpack-ответ, zstd-сжать, base64-кодировать.
+4. Вернуть `{payload_b64, compression, counts}`.
+
+Всё внутри одного `Execute`, без `ACAPI_CallUndoableCommand` (чтение
+не требует undo).
+
+### Открытый вопрос: batch-API ACAPI
+
+Есть ли у Graphisoft API **пакетный** вызов по массиву элементов,
+без порога 24?
+
+- Кандидат: `ACAPI_Element_GetPropertyValues(elemGuids, propGuids, ...)`.
+- Сигнатуру проверить только через CI (DevKit локально нет —
+  раздел 2a). 1-3 ребилда, по ошибкам компилятора.
+- Если работает — команда станет **радикально быстрее**: текущий
+  порог 0.5 ms/элемент на быстром пути может стать 0.05 ms/элемент
+  на batch-пути.
+- Если порога нет — используем цикл с чанками по 20, всё равно
+  работает в разы быстрее JSON-пути за счёт msgpack+zstd.
+
+### Python-клиент (TODO)
+
+```python
+import msgpack, zstandard, base64
+from plugins.archicad_plugin.tapir_commands import TapirConnection
+
+def bulk_get_property_values(conn, element_guids, property_guids):
+    payload = msgpack.packb({
+        "elements":   list(element_guids),
+        "properties": list(property_guids),
+    })
+    comp = zstandard.ZstdCompressor().compress(payload)
+    b64 = base64.b64encode(comp).decode("ascii")
+
+    r = conn.run_command("Bulk.GetPropertyValues", {
+        "payload_b64": b64,
+        "compression": "zstd",
+    })
+    if not r or r.get("error"):
+        raise RuntimeError(f"Bulk.GetPropertyValues: {r}")
+
+    raw = base64.b64decode(r["payload_b64"])
+    dec = zstandard.ZstdDecompressor().decompress(raw)
+    return msgpack.unpackb(dec, raw=False)
+```
+
+### Критерии приёмки
+
+- **500×3000** (1.5 M значений) — укладывается в **≤ 60 s**
+  (сейчас JSON-путь не работает вообще — раздел 9).
+- **5000×100** — укладывается в **≤ 30 s**.
+- Ответ по сети — **≤ 5 MB** (сейчас JSON 500×100 = 440 KB,
+  при 500×3000 будет ~13 MB, при msgpack+zstd — ~500 KB).
+- **Серия не вешает Archicad** (проверить: три Bulk.GetPropertyValues
+  подряд в одном скрипте).
+
+### Порядок действий
+
+1. Написать `BulkCommands.hpp/.cpp` с новой командой (используя
+   существующий `Base64Decode` и `ZstdDecompress`).
+2. Собрать, установить, прогнать на «Шаблон гидравлики IFC».
+3. Если укладывается в критерии — оставить.
+4. Если >60 s — искать batch-API (открытый вопрос выше).
+
+---
+
 ## 5. Известные грабли
 
 ### Graphisoft `target_link_libraries` — plain signature
