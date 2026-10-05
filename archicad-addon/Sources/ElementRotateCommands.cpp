@@ -52,7 +52,7 @@ GS::Optional<GS::UniString> RotateElementsByAngleCommand::GetInputParametersSche
     })";
 }
 
-GS::Optional<GS::UniString> RotateElementsByAngleCommand::GetResponseSchema () const
+GS::Optional<GS::UniString> RotateElementsByAngleCommand::GetRawResponseSchema () const
 {
     return R"({
         "type": "object",
