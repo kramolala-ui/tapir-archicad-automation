@@ -166,7 +166,12 @@ GS::ObjectState BulkPingCommand::Execute (const GS::ObjectState& parameters,
 
     GS::UniString compressionUs;
     parameters.Get ("compression", compressionUs);
-    const std::string compression = compressionUs.ToCStr ().Get ();
+    std::string compression = compressionUs.ToCStr ().Get ();
+
+    // Нормализация: пустой параметр == "none".
+    if (compression.empty ()) {
+        compression = "none";
+    }
 
     const std::string in = payloadB64.ToCStr ().Get ();
     std::vector<uint8_t> bytes = Base64Decode (in);
@@ -179,10 +184,14 @@ GS::ObjectState BulkPingCommand::Execute (const GS::ObjectState& parameters,
                 GS::UniString (err.c_str ()));
         }
         bytes.swap (decompressed);
-    } else if (!compression.empty () && compression != "none") {
+    } else if (compression != "none") {
+        // Простая конкатенация вместо GS::UniString::Printf — форматный
+        // %T не принимал аргумент, что приводило к exception внутри C++
+        // и run_command возвращал None без сообщения.
+        const std::string msg =
+            "Unknown compression: '" + compression + "'";
         return CreateErrorResponse (APIERR_BADPARS,
-            GS::UniString::Printf (
-                "Unknown compression: '%T'", compressionUs.ToPrintf ()));
+            GS::UniString (msg.c_str ()));
     }
 
     GS::ObjectState response;
