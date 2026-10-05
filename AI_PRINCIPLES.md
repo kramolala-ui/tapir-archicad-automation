@@ -367,6 +367,49 @@ AC26 независимо от судьбы AC28/29/30.
   своём проекте: значения сильно зависят от количества заполненных
   свойств и типов элементов.
 
+### Windows subprocess: cp866, не utf-8
+
+При вызове `subprocess.run(..., text=True)` из Python на Windows
+stderr/stdout утилит (taskkill, tasklist, где угодно) приходят в
+системной кодировке (обычно cp866 или cp1251), а `text=True`
+пытается декодировать их как utf-8 и падает с `UnicodeDecodeError`
+в reader-треде.
+
+**Что делать:** явно указывать `encoding='cp866', errors='replace'`:
+
+```python
+subprocess.run(
+    ['taskkill', '/F', '/IM', 'Archicad.exe'],
+    capture_output=True, text=True,
+    encoding='cp866', errors='replace',
+    timeout=30,
+)
+```
+
+Или `errors='replace'` без encoding, если кодировка не известна.
+
+### Серия GetPropertyValuesOfElements может уронить Archicad
+
+Наблюдение 2026-10-06 в проекте «Шаблон гидравлики IFC»:
+
+- **Одиночный вызов** `GetPropertyValuesOfElements` (500 объектов ×
+  20 свойств) — **566 ms**, OK.
+- **Второй вызов подряд** в том же соединении — **зависает навсегда**.
+  Archicad после этого не отвечает ни на TCP, ни через Task Manager.
+- Требуется `taskkill /F /IM Archicad.exe` и перезапуск.
+
+Это НЕ наша команда (BulkPing на 100 MB работает). Это поведение
+самого ACAPI или Tapir 1.7.1. Возможно — накопление состояния
+(undo-стек, кеш свойств) между вызовами.
+
+**Что это значит для bulk-команды в C++:**
+
+- Один Execute = одна ACAPI-транзакция = одно undo-состояние.
+  Никаких чередований клиент-сервер. Это **сильный аргумент** за
+  bulk-команду — она решает не только скорость, но и стабильность.
+- До реализации bulk-команды — **не вызывать GetPropertyValues**
+  сериями больше одного раза за сессию Archicad.
+
 ### AC30: RC-DevKit недоступен
 
 В матрице AC30 качается с `dl.graphisoft.com/release-candidate/30/`,
