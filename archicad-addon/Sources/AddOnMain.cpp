@@ -1330,8 +1330,8 @@ GSErrCode Initialize (void)
     { // Bulk Commands
         CommandGroup bulkCommands ("Bulk Commands");
         err |= RegisterCommand<BulkPingCommand> (
-            bulkCommands, "1.0.0",
-            "Test command: base64-decode payload, return size and hex preview. Used to validate the binary transport path before adding msgpack/zstd."
+            bulkCommands, "1.1.0",
+            "Test command: base64-decode payload (optionally zstd-decompress), return size and hex preview. Validates the binary transport path before adding msgpack."
         );
         AddCommandGroup (bulkCommands);
     }
