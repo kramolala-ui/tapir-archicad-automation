@@ -16,6 +16,9 @@ jobs:
   # installer executables) the weekly release waits for before publishing.
   build_win:
     strategy:
+      # false: падение одной версии (например AC30 с RC-DevKit) не должно
+      # отменять сборки остальных версий — особенно ту, что нам нужна сейчас.
+      fail-fast: false
       matrix:
         params:
           - acVersion: 25
