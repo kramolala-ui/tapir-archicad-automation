@@ -53,6 +53,31 @@ FetchContent_Declare (
 )
 FetchContent_MakeAvailable (zstd)
 
+# =============================================================================
+#  msgpack-cxx (header-only, C++17)
+# =============================================================================
+# Для шага 3 bulk-транспорта: msgpack-cxx — header-only, линковать нечего,
+# только include-путь. FetchContent со SOURCE_SUBDIR в корне, потому что
+# у msgpack-cxx CMakeLists.txt в корне репозитория (не как у zstd).
+
+FetchContent_Declare (
+    msgpack_cxx
+    URL          https://github.com/msgpack/msgpack-c/releases/download/cpp-6.1.1/msgpack-cxx-6.1.1.tar.gz
+    URL_HASH     SHA256=7165f3aa966e8e4a9889e0e7a2174f92b8f1cf3dc1be0fd2c2c2a5c9bbdd41df
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+FetchContent_MakeAvailable (msgpack_cxx)
+
+if (TARGET msgpack-cxx)
+    target_link_libraries (AddOn msgpack-cxx)
+elseif (TARGET msgpackc-cxx)
+    target_link_libraries (AddOn msgpackc-cxx)
+else ()
+    # Fallback: только include-путь (msgpack-cxx — header-only)
+    target_include_directories (AddOn SYSTEM PRIVATE
+        ${msgpack_cxx_SOURCE_DIR}/include)
+endif ()
+
 # Имя static-таргета в zstd менялось между версиями. Пробуем
 # несколько вариантов; если ни один не найден — печатаем список
 # всех доступных таргетов для диагностики.
