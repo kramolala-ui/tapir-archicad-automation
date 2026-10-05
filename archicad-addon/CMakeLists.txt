@@ -73,9 +73,12 @@ else ()
     message (FATAL_ERROR "zstd: не найден CMake target после FetchContent.")
 endif ()
 
-target_link_libraries (AddOn PRIVATE ${ZSTD_LINK_TARGET})
-# Include-путь: у libzstd_static PUBLIC include — lib/. На всякий случай
-# добавляем и его (идемпотентно).
+# ВАЖНО: Graphisoft CMakeCommon.cmake использует plain signature
+# (target_link_libraries без PRIVATE/PUBLIC). CMake запрещает смешивать
+# plain и keyworded для одного target'а — поэтому и здесь без ключевых
+# слов. Include-пути добавляем отдельной директивой (она к линковке
+# не относится и ключевые слова поддерживает).
+target_link_libraries (AddOn ${ZSTD_LINK_TARGET})
 target_include_directories (AddOn SYSTEM PRIVATE
     ${zstd_SOURCE_DIR}/lib
     ${zstd_SOURCE_DIR}/lib/common
