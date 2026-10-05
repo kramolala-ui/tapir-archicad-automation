@@ -43,7 +43,6 @@
 #include "MEPCommands.hpp"
 #include "KeynoteCommands.hpp"
 #include "ElementRotateCommands.hpp"
-#include "BulkCommands.hpp"
 
 template <typename CommandType>
 GSErrCode RegisterCommand (CommandGroup& group, const GS::UniString& version, const GS::UniString& description)
@@ -1325,6 +1324,15 @@ GSErrCode Initialize (void)
             "Generates files for the documentation. Used by Tapir developers only."
         );
         AddCommandGroup (developerCommands);
+    }
+
+    { // Bulk Commands
+        CommandGroup bulkCommands ("Bulk Commands");
+        err |= RegisterCommand<BulkPingCommand> (
+            bulkCommands, "1.0.0",
+            "Test command: base64-decode payload, return size and hex preview. Used to validate the binary transport path before adding msgpack/zstd."
+        );
+        AddCommandGroup (bulkCommands);
     }
 
     // Loading the palette singleton applies the custom shortcut menu labels and the enabled state
