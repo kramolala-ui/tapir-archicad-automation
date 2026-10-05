@@ -42,6 +42,7 @@
 #include "SolidElementOperationCommands.hpp"
 #include "MEPCommands.hpp"
 #include "KeynoteCommands.hpp"
+#include "ElementRotateCommands.hpp"
 
 template <typename CommandType>
 GSErrCode RegisterCommand (CommandGroup& group, const GS::UniString& version, const GS::UniString& description)
@@ -583,6 +584,10 @@ GSErrCode Initialize (void)
         err |= RegisterCommand<RemoveElementNotificationClientCommand> (
             elementCommands, "1.2.8",
             "Removes an element notification client."
+        );
+        err |= RegisterCommand<RotateElementsByAngleCommand> (
+            elementCommands, "1.0.0",
+            "Rotates elements around a point by a given angle. Works for any element type including library parts."
         );
         AddCommandGroup (elementCommands);
     }

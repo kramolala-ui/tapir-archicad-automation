@@ -1,0 +1,121 @@
+name: Archicad Add-On Build (Manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      ac_version:
+        description: 'Archicad version'
+        required: true
+        type: choice
+        options:
+          - 25
+          - 26
+          - 27
+          - 28
+          - 29
+      platform:
+        description: 'Platform'
+        required: true
+        type: choice
+        options:
+          - Windows
+          - macOS
+
+jobs:
+  build_win:
+    if: inputs.platform == 'Windows'
+    runs-on: windows-2025
+    steps:
+    - name: Checkout Repo
+      uses: actions/checkout@v4
+
+    - name: Resolve Dev Kit URL
+      id: devkit
+      shell: bash
+      run: |
+        case "${{ inputs.ac_version }}" in
+          25) URL="https://github.com/GRAPHISOFT/archicad-api-devkit/releases/download/25.3002/API.Development.Kit.WIN.25.3002.zip" ;;
+          26) URL="https://github.com/GRAPHISOFT/archicad-api-devkit/releases/download/26.3000/API.Development.Kit.WIN.26.3000.zip" ;;
+          27) URL="https://github.com/GRAPHISOFT/archicad-api-devkit/releases/download/27.3001/API.Development.Kit.WIN.27.3001.zip" ;;
+          28) URL="https://github.com/GRAPHISOFT/archicad-api-devkit/releases/download/28.3001/API.Development.Kit.WIN.28.3001.zip" ;;
+          29) URL="https://github.com/GRAPHISOFT/archicad-api-devkit/releases/download/29.3000/API.Development.Kit.WIN.29.3000.zip" ;;
+        esac
+        echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+    - name: Cache Development Kit
+      id: devkit-cache
+      uses: actions/cache@v4
+      with:
+        path: archicad-addon/Build/DevKits/AC${{ inputs.ac_version }}
+        key: devkit-win-AC${{ inputs.ac_version }}
+
+    - name: Download Development Kit
+      if: steps.devkit-cache.outputs.cache-hit != 'true'
+      timeout-minutes: 30
+      run: python archicad-addon/Tools/download_and_unzip.py ${{ steps.devkit.outputs.url }} archicad-addon/Build/DevKits/AC${{ inputs.ac_version }}
+
+    - name: Generate Project (AC < 29)
+      if: ${{ inputs.ac_version < 29 }}
+      run: cmake -B archicad-addon/Build -G "Visual Studio 17 2022" -A "x64" -T "v142" -DAC_VERSION=${{ inputs.ac_version }} -DAC_API_DEVKIT_DIR="archicad-addon/Build/DevKits/AC${{ inputs.ac_version }}/Support" archicad-addon
+
+    - name: Generate Project (AC >= 29)
+      if: ${{ inputs.ac_version >= 29 }}
+      run: cmake -B archicad-addon/Build -G "Visual Studio 17 2022" -A "x64" -T "v143" -DAC_VERSION=${{ inputs.ac_version }} -DAC_API_DEVKIT_DIR="archicad-addon/Build/DevKits/AC${{ inputs.ac_version }}/Support" archicad-addon
+
+    - name: Build RelWithDebInfo
+      run: cmake --build archicad-addon/Build --config RelWithDebInfo
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: TapirAddOn_AC${{ inputs.ac_version }}_Win
+        path: archicad-addon/Build/RelWithDebInfo/TapirAddOn_AC${{ inputs.ac_version }}_Win.apx
+        retention-days: 30
+
+  build_mac:
+    if: inputs.platform == 'macOS'
+    runs-on: ${{ inputs.ac_version < 26 && 'macos-15-intel' || 'macos-latest' }}
+    steps:
+    - name: Checkout Repo
+      uses: actions/checkout@v4
+
+    - name: Resolve Dev Kit URL
+      id: devkit
+      shell: bash
+      run: |
+        case "${{ inputs.ac_version }}" in
+          25) URL="https://github.com/GRAPHISOFT/archicad-api-devkit/releases/download/25.3002/API.Development.Kit.MAC.25.3002.zip" ;;
+          26) URL="https://github.com/GRAPHISOFT/archicad-api-devkit/releases/download/26.3000/API.Development.Kit.MAC.26.3000.zip" ;;
+          27) URL="https://github.com/GRAPHISOFT/archicad-api-devkit/releases/download/27.3001/API.Development.Kit.MAC.27.3001.zip" ;;
+          28) URL="https://github.com/GRAPHISOFT/archicad-api-devkit/releases/download/28.3001/API.Development.Kit.MAC.28.3001.zip" ;;
+          29) URL="https://github.com/GRAPHISOFT/archicad-api-devkit/releases/download/29.3000/API.Development.Kit.MAC.29.3000.zip" ;;
+        esac
+        echo "url=$URL" >> "$GITHUB_OUTPUT"
+
+    - name: Cache Development Kit
+      id: devkit-cache
+      uses: actions/cache@v4
+      with:
+        path: archicad-addon/Build/DevKits/AC${{ inputs.ac_version }}
+        key: devkit-mac-AC${{ inputs.ac_version }}
+
+    - name: Download Development Kit
+      if: steps.devkit-cache.outputs.cache-hit != 'true'
+      timeout-minutes: 30
+      run: python3 archicad-addon/Tools/download_and_unzip.py ${{ steps.devkit.outputs.url }} archicad-addon/Build/DevKits/AC${{ inputs.ac_version }}
+
+    - name: Generate Project
+      run: cmake -B archicad-addon/Build -G "Xcode" -DAC_VERSION=${{ inputs.ac_version }} -DAC_API_DEVKIT_DIR="archicad-addon/Build/DevKits/AC${{ inputs.ac_version }}/Support" archicad-addon
+
+    - name: Build RelWithDebInfo
+      run: cmake --build archicad-addon/Build --config RelWithDebInfo
+
+    - name: Create zip file
+      run: ditto -c -k --keepParent archicad-addon/Build/RelWithDebInfo/TapirAddOn_AC${{ inputs.ac_version }}_Mac.bundle archicad-addon/Build/RelWithDebInfo/TapirAddOn_AC${{ inputs.ac_version }}_Mac.zip
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: TapirAddOn_AC${{ inputs.ac_version }}_Mac
+        path: archicad-addon/Build/RelWithDebInfo/TapirAddOn_AC${{ inputs.ac_version }}_Mac.zip
+        retention-days: 30
