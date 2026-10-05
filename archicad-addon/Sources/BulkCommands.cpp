@@ -141,7 +141,7 @@ GS::Optional<GS::UniString> BulkPingCommand::GetInputParametersSchema () const
     })";
 }
 
-GS::Optional<GS::UniString> BulkPingCommand::GetResponseSchema () const
+GS::Optional<GS::UniString> BulkPingCommand::GetRawResponseSchema () const
 {
     return R"({
         "type": "object",
