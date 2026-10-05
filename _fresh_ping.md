@@ -1,3 +1,4 @@
-Ping from AI Bridge.
+Ping from AI Bridge — проверка записи в ветку fresh.
 
-If you see this file in the fresh branch — Bridge writes to fresh correctly.
+Если этот файл виден в ветке fresh — Bridge настроен правильно.
+Удалить после проверки.
