@@ -32,6 +32,7 @@
 #include "RevisionCommands.hpp"
 #include "NotificationCommands.hpp"
 #include "DesignOptionCommands.hpp"
+#include "ElementRotateCommands.hpp"
 
 template <typename CommandType>
 GSErrCode RegisterCommand (CommandGroup& group, const GS::UniString& version, const GS::UniString& description)
