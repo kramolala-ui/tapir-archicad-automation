@@ -73,6 +73,7 @@ jobs:
 
   build_mac:
     strategy:
+      fail-fast: false
       matrix:
         params:
           - acVersion: 25
