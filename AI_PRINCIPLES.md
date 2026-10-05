@@ -240,8 +240,8 @@ C++:
 
 | # | Шаг | Статус |
 |---|---|---|
-| 1 | `BulkPing` с base64 | **✓ работает** |
-| 2 | + zstd (FetchContent v1.5.6) | **✓ работает** |
+| 1 | `BulkPing` с base64 | **✓ работает** (2026-10-05) |
+| 2 | + zstd (FetchContent v1.5.6) | **✓ работает** (2026-10-06, round-trip 16 ms) |
 | 3 | + msgpack-cxx (header-only) | TODO |
 | 4 | `Bulk.GetPropertyValues` | TODO |
 | 5 | Пакетный ACAPI (см. 4a) | TODO |
