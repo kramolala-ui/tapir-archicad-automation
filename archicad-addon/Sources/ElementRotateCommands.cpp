@@ -2,7 +2,7 @@
 #include "MigrationHelper.hpp"
 #include <cmath>
 
-RotateElementsByAngleCommand::RotateElementsCommand () :
+RotateElementsByAngleCommand::RotateElementsByAngleCommand () :
     CommandBase (CommonSchema::Used)
 {}
 
