@@ -43,6 +43,7 @@
 #include "MEPCommands.hpp"
 #include "KeynoteCommands.hpp"
 #include "ElementRotateCommands.hpp"
+#include "BulkCommands.hpp"
 
 template <typename CommandType>
 GSErrCode RegisterCommand (CommandGroup& group, const GS::UniString& version, const GS::UniString& description)
