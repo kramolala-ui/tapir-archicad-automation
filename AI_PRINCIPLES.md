@@ -11,15 +11,10 @@
 
 ## 0. Как подключить этот файл к промпту AI Bridge
 
-Этот файл — часть рабочего контекста. Чтобы Bridge сам подтягивал
-его в начале сессии, надо сделать две вещи (обе — однократно).
-
 ### 0.1. Пользователь: вкладка «Промпт» → тип «GitHub»
 
-В AI Bridge есть вкладка **«Промпт»** и переключатель типа промпта
-(`main` / `GitHub` / `donor`). Для работы с аддоном выбери тип
-**GitHub** и в поле «Дополнительные инструкции» (или в конце
-github-промпта) добавь строку:
+В поле «Дополнительные инструкции» (или в конце github-промпта)
+добавь строку:
 
 ```
 Перед первым ответом в новой сессии прочитай файл:
@@ -27,31 +22,29 @@ github-промпта) добавь строку:
 и держи его в контексте до конца сессии.
 ```
 
-Сохрани промпт. Со следующего запуска Bridge он будет в промпте.
+Сохрани промпт. Со следующего запуска Bridge подтянет файл сам.
 
-### 0.2. Пользователь: вкладка «GitHub» → репозиторий и токен
+### 0.2. Пользователь: вкладка «GitHub»
 
 - **Репозиторий:** `kramolala-ui/tapir-archicad-automation`
-- **Токен:** Personal Access Token со scope `repo` (или
-  `Contents: Read+Write`). Хранится в QSettings.
-- **Рабочая ветка:** должна отображаться как `fresh` — это значит,
-  что `WORK_BRANCH` в `agent_tools/github_provider.py` равен `"fresh"`.
-  Если показывает `ai_bridge/work` — правь константу и перезапускай
-  Bridge (см. п. 4a ниже про перезапуск).
+- **Токен:** PAT со scope `repo` (или `Contents: Read+Write`).
+- **Рабочая ветка:** должна показывать `fresh`. Это значит, что
+  `WORK_BRANCH` в `agent_tools/github_provider.py` равен `"fresh"`.
+  Если показывает `ai_bridge/work` — правь константу + перезапускай
+  Bridge (см. 4b).
 
 ### 0.3. LLM: первый ход в новой сессии
 
-**Первый ответ в сессии — всегда `===AI_REQUEST===` с одним файлом:**
+Всегда — `===AI_REQUEST===` с одним файлом:
 
 ```json
 [{"action": "request",
   "files": ["github://kramolala-ui/tapir-archicad-automation@fresh/AI_PRINCIPLES.md"],
-  "reason": "стартовый контекст перед работой"}]
+  "reason": "стартовый контекст"}]
 ```
 
-После получения файла — держи его в уме, ссылайся на разделы
-(«см. раздел 4a про узкие места ACAPI») в ответах. Не перечитывай
-каждый раз, если работаешь в той же сессии.
+Дальше — работа по разделам, ссылайся на них («см. 4c про статус
+bulk-транспорта»).
 
 ---
 
@@ -60,17 +53,14 @@ github-промпта) добавь строку:
 Форк [ENZYME-APD/tapir-archicad-automation](https://github.com/ENZYME-APD/tapir-archicad-automation)
 от `kramolala-ui`.
 
-- **Upstream** — 105 команд, JSON API к Archicad через Graphisoft add-on
-  механизм (`ACAPI_AddOnAddOnCommunication_InstallAddOnCommandHandler`).
+- **Upstream** — 105 команд, JSON API к Archicad.
 - **Наш форк** — 260+ команд: MEP, IFC, слои, аннотации, solid
-  operations, rotate elements, копирование/поворот, операции с зонами,
-  ключевые ноты, скрипт-UI, теперь ещё bulk-команды.
-- **Зачем форк:** upstream не двигается, а нам нужны команды, которых
-  там нет, и оптимизации, на которые upstream не пойдёт.
+  operations, rotate elements, копирование/поворот, зоны, ключевые
+  ноты, скрипт-UI, **bulk-команды (BulkPing в разработке)**.
+- **Зачем форк:** upstream не двигается; нужны свои команды и
+  оптимизации, на которые upstream не пойдёт.
 
-**Где живёт истина:** рабочая ветка — **`fresh`**. Это не `work`
-(там upstream + 1 наша команда), не `main` (upstream), не
-`cpp_bridge/work`.
+**Рабочая ветка:** `fresh` (не `work`, не `main`, не `cpp_bridge/work`).
 
 **Локальная копия:** `C:\Python_projects\tapir-custom\archicad-addon\`.
 Перед работой уточняй у пользователя, куда писать: через AI Bridge —
@@ -86,53 +76,103 @@ LLM (AI Bridge, @fresh)
   → GitHub Actions собирает аддон (автоматически)
   → пользователь скачивает .apx (Win) / .bundle (Mac)
   → устанавливает в Archicad
-  → тестирует живой проект
-  → синхронизирует с локальным tapir-custom (иногда)
+  → тестирует живой проект через AI Bridge (см. 2a)
 ```
-
-### ⚠ Сборка — ТОЛЬКО через GitHub Actions
-
-**На машине разработчика НЕТ локального API Dev Kit.**
-
-- Не пытайся искать `ACAPinc.h`, `ACAPI*.hpp` или `API Dev Kit`
-  на диске — их нет ни в `C:\Program Files\GRAPHISOFT`, ни в
-  `C:\DevKit`, ни где-либо ещё.
-- Не предлагай «сначала проверим сигнатуру в DevKit» — это невозможно.
-- Не строй планы, требующие локальной компиляции.
-- Не спрашивай путь к DevKit — его нет.
-
-**Что это значит для правок:**
-
-1. Точные сигнатуры ACAPI-функций проверяются **только через сборку
-   в GitHub Actions**. Если компиляция падает — лог присылает
-   пользователь, правка делается по ошибке компилятора.
-2. Любая новая ACAPI-функция (особенно пакетные варианты) — это
-   **итеративная работа**: 1-3 ребилда, пока сигнатура не сойдётся.
-   Это нормально.
-3. Если можешь избежать нового ACAPI-вызова — избегай. Работай с
-   тем, что уже скомпилировано, или с библиотеками через
-   `FetchContent` / `find_package` (их API известен по документации).
 
 ### Правила правок
 
-1. Всегда проверяй, что путь в `@fresh`, а не `@work` / `@main`.
-2. До правки — `stat` или `read`, чтобы убедиться, что файл не
-   изменился с прошлой сессии.
+1. Всегда проверяй, что путь в `@fresh`.
+2. До правки — `stat` или `read`.
 3. Новый `.hpp/.cpp` в `Sources/` подхватывается CMake-глобом
-   автоматически. Не надо править `CMakeLists.txt` — он тривиален
-   и делегирует всё в `Tools/CMakeCommon.cmake`.
-4. Регистрация команды — всегда в `AddOnMain.cpp::Initialize`.
-   Место вставки: **до** блока «Loading the palette singleton…»
-   (баг #516 — если палитра упадёт, команды после неё не зарегаются).
-5. Один блок `AI_CHANGES` = 3-5 правок. `write` большого файла —
+   автоматически. Править `CMakeLists.txt` нужно только для
+   **внешних зависимостей** (см. 4c).
+4. Регистрация команды — в `AddOnMain.cpp::Initialize`, **до** блока
+   «Loading the palette singleton…» (баг #516).
+5. Один `AI_CHANGES` = 3-5 правок. `write` большого файла —
    отдельным блоком.
-6. **Не используй `replace` для файла, только что созданного `write`
-   в той же сессии.** GitHub raw-кэш не успевает, `fetch_file`
-   отдаёт 404, весь батч откатывается. Правь через повторный `write`.
-7. **Bridge пишет только в ветку `WORK_BRANCH`.** Даже если в пути
-   стоит `@fresh`, при `WORK_BRANCH="fresh"` всё уходит в fresh.
-   Алиас `@work` = `WORK_BRANCH` (текущее значение). Алиас `@main`
-   идёт ровно в main (только чтение, по политике).
+6. **Не делай `replace` для файла, только что созданного `write`** —
+   raw-кэш не успевает, `fetch_file` даёт 404, батч откатится.
+   Правь через повторный `write`.
+
+---
+
+## 2a. Сборка, установка и проверка через AI Bridge
+
+### Сборка — ТОЛЬКО через GitHub Actions
+
+**На машине разработчика НЕТ локального API Dev Kit.** Не ищи
+`ACAPinc.h` / `ACAPI*.hpp` на диске, не предлагай «проверим сигнатуру
+локально», не строй планы с локальной компиляцией — это невозможно.
+
+Цикл сборки:
+
+1. LLM пушит правку в `fresh`.
+2. GitHub Actions собирает автоматически (триггер — `workflow_dispatch`
+   вручную или push tag). Обычно ~5 мин на Windows-матрицу 25-29.
+3. Artifacts внизу страницы workflow: `Tapir Add-On AC26 Win`,
+   `... AC26 Mac`, `Tapir Installer Win/Mac`.
+
+### ⚠ Всегда `Run workflow`, а не `Re-run jobs`
+
+`Re-run jobs` воспроизводит **тот же коммит**, что в исходном run —
+все правки, сделанные после него, не подхватятся. Симптом: снова
+падает на ошибке, которую мы уже «исправили».
+
+Правильно:
+1. Actions → «Archicad Add-On Build and Release».
+2. Справа «Run workflow», Branch=`fresh`.
+3. Новый run возьмёт свежий HEAD.
+
+### Установка в Archicad 26 (Win)
+
+1. Скачать `Tapir Add-On AC26 Win` (zip).
+2. Распаковать, там `TapirAddOn_AC26_Win.apx`.
+3. Положить в папку Add-On'ов:
+   `C:\Users\<user>\Documents\GRAPHISOFT\Add-Ons\Archicad 26\`
+   (точный путь — Options → Add-On Manager → «Открыть папку»).
+4. **Полностью закрыть Archicad** и открыть заново — без этого
+   аддон не перезагрузится.
+5. Options → Add-On Manager → убедиться, что `TapirAddOn` есть и
+   активен.
+
+### Проверка через AI Bridge (Python-скрипт)
+
+Когда Archicad запущен с новым аддоном, проверяем команды через
+`===AI_PROGRAM=== action=script`:
+
+```python
+from plugins.archicad_plugin.tapir_commands import TapirConnection
+conn = TapirConnection(port=19723)
+r = conn.run_command("BulkPing", {"payload_b64": "SGVsbG8="})
+print(r)
+# Ожидаем: {'size': 5, 'preview_hex': '48656c6c6f',
+#            'compression': 'none', 'zstd_version': 10506}
+```
+
+Для zstd:
+
+```python
+import base64, zstandard
+from plugins.archicad_plugin.tapir_commands import TapirConnection
+conn = TapirConnection(port=19723)
+data = b"Hello, bulk transport with zstd! " * 100
+compressed = zstandard.ZstdCompressor().compress(data)
+r = conn.run_command("BulkPing", {
+    "payload_b64": base64.b64encode(compressed).decode("ascii"),
+    "compression": "zstd",
+})
+print(r)
+# Ожидаем: size=3200, compression='zstd', zstd_version=10506
+```
+
+Если `zstd_version` = `10506` — это 1.5.6, наша версия, всё правильно.
+Если 0 или другое число — линковка подхватила чужую zstd (см. 5).
+
+### Порт Tapir
+
+По умолчанию `19723`. Если Archicad запущен не на этом порту,
+порт покажет `probe_tapir` (см. `agent_tools/workspace/tapir_probe.py`)
+или сам Tapir palette в UI Archicad.
 
 ---
 
@@ -140,250 +180,270 @@ LLM (AI Bridge, @fresh)
 
 ### CommandBase
 
-Базовый класс — `Sources/CommandBase.hpp`. Наследники реализуют:
+Базовый класс — `Sources/CommandBase.hpp`.
 
-- `GetName()` — имя команды как видит клиент (без namespace).
-- `GetInputParametersSchema()` — JSON-схема входных параметров.
-- `GetResponseSchema()` — JSON-схема ответа.
-- `Execute(params, processControl)` — сама работа.
-- `GetNamespace()` — `final` в базовом, всегда `TapirCommand`.
+Наследники реализуют:
+- `GetName()` — имя команды.
+- `GetInputParametersSchema()` — JSON-схема входа.
+- **`GetRawResponseSchema()`** — JSON-схема ответа (НЕ
+  `GetResponseSchema` — тот `final` в базовом!).
+- `Execute(params, processControl)` — работа.
 
-**Важно:** `namespace` и `execution policy` — `final`. Их нельзя
-переопределить. Всё, что делает аддон, — это стандартные API-команды
-Archicad. Свой HTTP-сервер / endpoint — невозможен через API-команды.
-Транспорт закрыт Graphisoft'ом.
+`GetNamespace()` — `final`, всегда `TapirCommand`. Свой HTTP-сервер
+или endpoint через API-команды **невозможен**.
 
 ### Поток данных
 
 ```
-Python-клиент → JSON → Graphisoft runtime → GS::ObjectState
-                  → CommandBase::Execute(params) → ответ ObjectState
-                  → Graphisoft runtime → JSON → Python
+Python → JSON → Graphisoft runtime → GS::ObjectState
+       → CommandBase::Execute(params) → ответ ObjectState
+       → Graphisoft runtime → JSON → Python
 ```
 
-**Пункт «Graphisoft runtime парсит JSON в ObjectState» — самый
-медленный.** Он не наш, заменить нельзя. Единственный способ обойти —
-упаковать данные в **одну строку** (`payload_b64`) и парсить её самим
-внутри `Execute`.
+**Пункт «Graphisoft runtime парсит JSON» — самый медленный.**
+Единственный способ обойти — упаковать данные в одну строку
+`payload_b64` и парсить самим внутри `Execute` (см. 4).
 
 ### Группы команд
 
-`CommandGroup` — организационная сущность. Создаётся в `Initialize`,
-через `RegisterCommand<Cmd>(group, version, description)` складываются
-команды. Порядок — не важен, но по стилю идут группами: Application,
-Project, Element, Element Creation, Attribute, Property,
-Classification, IFC, MEP, SolidElementOperation, ScriptUI, Developer,
-Bulk.
+CommandGroup — организационная сущность, создаётся в `Initialize`.
+Порядок: Application, Project, Element, Element Creation, Attribute,
+Property, Classification, IFC, MEP, SolidElementOperation, ScriptUI,
+Developer, **Bulk**.
 
 ---
 
-## 4. Что делаем сейчас: bulk-транспорт
+## 4. Bulk-транспорт
 
 ### Проблема
 
-Массовые операции (3000 свойств × 20000 объектов) упираются в:
-
-1. **Graphisoft JSON-парсер** — сходит с ума на больших JSON.
-2. **Лимит батча ~500 элементов** — 40 HTTP-раундов.
-3. **Одиночные ACAPI-вызовы в цикле** (см. раздел 4a).
+3000 свойств × 20000 объектов упираются в:
+1. Graphisoft JSON-парсер (большие JSON не переваривает).
+2. Лимит батча ~500 элементов (40 HTTP-раундов).
+3. Одиночные ACAPI-вызовы в цикле (см. 4a).
 
 ### Решение: base64(msgpack(zstd(data)))
-
-Не меняем транспорт Graphisoft. Оборачиваем тяжёлые данные в одну
-JSON-строку `payload_b64`:
 
 ```
 Python:
   data → msgpack → zstd → base64 → "payload_b64": "..."
 
-C++ (в Execute):
-  payload_b64 → base64-decode → zstd-decompress
-              → msgpack-parse → обработка порциями ВНУТРИ одного вызова
+C++:
+  payload_b64 → base64 → zstd-decompress → msgpack-parse
+              → обработка порциями ВНУТРИ одного вызова
 ```
 
-**Что это даёт:**
+Выигрыш: 1 запрос вместо 40; zstd 5-10× по объёму; base64 съедает
+33%, но это меньше выигрыша.
 
-- Один HTTP-запрос вместо 40.
-- Парсинг внутри аддона — на своей стороне, быстро.
-- zstd — 5-10× по объёму.
-- base64 съедает 33%, но это меньше выигрыша.
-
-### Порядок внедрения
+### Статус (2026-10-06)
 
 | # | Шаг | Статус |
 |---|---|---|
-| 1 | `BulkPing` — base64 only | **сделано** |
-| 2 | Подключить zstd через FetchContent | TODO |
-| 3 | Подключить msgpack-cxx (header-only) | TODO |
-| 4 | `Bulk.GetPropertyValues` на существующем ACAPI | TODO |
-| 5 | Пакетный ACAPI в `PropertyCommands.cpp` | TODO |
-| 6 | Остальные bulk-команды (set, gdl, details) | TODO |
+| 1 | `BulkPing` с base64 | **✓ работает** |
+| 2 | + zstd (FetchContent v1.5.6) | **✓ работает** |
+| 3 | + msgpack-cxx (header-only) | TODO |
+| 4 | `Bulk.GetPropertyValues` | TODO |
+| 5 | Пакетный ACAPI (см. 4a) | TODO |
+| 6 | Остальные bulk-команды | TODO |
 
-**Не начинать шаг N+1, пока не проверен на живом шаг N.**
+### Подключение zstd в CMakeLists.txt
+
+zstd тянется через `FetchContent`:
+
+```cmake
+FetchContent_Declare (
+    zstd
+    URL          .../zstd-1.5.6.tar.gz
+    URL_HASH     SHA256=8c29e06...
+    SOURCE_SUBDIR build/cmake   # ВАЖНО: корневой CMakeLists — SDK, не рабочий
+    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+)
+FetchContent_MakeAvailable (zstd)
+
+# Graphisoft CMakeCommon использует plain target_link_libraries
+# (без PRIVATE/PUBLIC). Значит и мы должны без ключевых слов.
+target_link_libraries (AddOn ${ZSTD_LINK_TARGET})
+target_include_directories (AddOn SYSTEM PRIVATE
+    ${zstd_SOURCE_DIR}/lib
+    ...)
+```
+
+Правильные target-имена для 1.5.6: `libzstd_static` (используем),
+fallback `zstd_static` / `libzstd` / `zstd`.
 
 ---
 
 ## 4a. Известные узкие места ACAPI
 
-Места, где аддон делает по одному ACAPI-вызову на элемент там, где
-теоретически может быть пакетный. **Не оптимизировать до того, как
-bulk-транспорт заработает** — иначе непонятно, что дало выигрыш.
+Не оптимизировать **до** того, как bulk-транспорт заработает — иначе
+непонятно, что дало выигрыш.
 
 | Файл / метод | Что не так |
 |---|---|
-| `PropertyCommands.cpp::GetPropertyValuesOfElementsCommand` | `for (element)` + `ACAPI_Element_GetPropertyValuesByGuid` — 500 вызовов на 500 элементов. Пакетный аналог: `ACAPI_Element_GetPropertyValues(elemGuidsArray, ...)` |
-| `PropertyCommands.cpp::SetPropertyValuesOfElementsCommand` | `for (element)` + `GetPropertyValuesByGuid` + `ACAPI_Element_SetProperty` по одному = 1000+ вызовов. Пакетный аналог: `ACAPI_Element_SetPropertyValues(...)` |
-| `PropertyCommands.cpp::GetPropertyValuesOfAttributesCommand` | `ACAPI_Attribute_GetPropertyValuesByGuid` в цикле — то же для атрибутов |
-| `ClassificationCommands.cpp::GetClassificationsOfElementsCommand` | Цикл по элементам. Проверить `ACAPI_Element_GetClassifications(elemGuidsArray, ...)` |
-| `ClassificationCommands.cpp::SetClassificationsOfElementsCommand` | Цикл по элементам. Проверить `ACAPI_Element_SetClassifications(...)` |
-| `ElementGDLParameterCommands.cpp` (обе команды) | GDL через memo — пакетного API может не быть. Проверить `BMKillHandle` для memo (утечка при долгой работе) |
+| `PropertyCommands.cpp::GetPropertyValuesOfElementsCommand` | `for (element)` + `GetPropertyValuesByGuid` — 500 вызовов. Пакетный: `ACAPI_Element_GetPropertyValues(elemGuidsArray, ...)` |
+| `PropertyCommands.cpp::SetPropertyValuesOfElementsCommand` | То же + `SetProperty` по одному = 1000+ вызовов |
+| `PropertyCommands.cpp::GetPropertyValuesOfAttributesCommand` | `ACAPI_Attribute_GetPropertyValuesByGuid` в цикле |
+| `ClassificationCommands.cpp::Get/SetClassificationsOfElementsCommand` | Цикл по элементам |
+| `ElementGDLParameterCommands.cpp` | GDL через memo — пакетного API может не быть. Проверить `BMKillHandle` (утечка) |
 
-**Как проверять сигнатуры, если DevKit недоступен:**
-
-1. Внести правку, закоммитить в `fresh`.
-2. Дождаться сборки в GitHub Actions.
-3. Если падает — смотреть лог: «no matching function call» и полная
-   сигнатура, которую компилятор ожидает.
-4. Скорректировать — 1-3 итерации обычно хватает.
-
-**Когда этим заниматься:** после того, как bulk-транспорт заработает
-и мы замерим выигрыш. Тогда станет видно, где реальный bottleneck:
-в парсинге JSON / в пересылке / в ACAPI. Если в ACAPI — оптимизировать
-эти методы. Если в транспорте — не трогать ACAPI.
+Проверка сигнатур — только через CI (см. 2a): 1-3 ребилда пока не сойдётся.
 
 ---
 
 ## 4b. Перезапуск AI Bridge
 
-`agent_tools/*.py` (в том числе `github_provider.py`, `dialog.py`,
-`bridge.py`, `protocol.py`, `response_handler.py`, `request_handler.py`)
-**не подхватываются на лету**. Если правишь эти файлы —
-**закрыть окно Bridge и открыть заново**.
+`agent_tools/*.py` (`github_provider.py`, `dialog.py`, `bridge.py`,
+`protocol.py`, `response_handler.py`, `request_handler.py`)
+**не подхватываются на лету**. Правишь — закрываешь окно Bridge,
+открываешь заново.
 
-Симптом «правка применилась, но поведение старое» = не перезапущен
-Bridge.
+Симптом «правка применилась, но поведение старое» = забыл перезапустить.
 
-Особенно важно при:
-- смене `WORK_BRANCH` (см. раздел 0.2),
-- правке UI-лэйаута (новые поля не появятся без перезапуска),
-- изменениях в протоколе маркеров.
+Особенно важно при: смене `WORK_BRANCH`, правке UI-лэйаута, изменениях
+в протоколе маркеров.
 
 ---
 
 ## 5. Известные грабли
 
+### Graphisoft `target_link_libraries` — plain signature
+
+`CMakeCommon.cmake` использует `target_link_libraries` **без ключевых
+слов**. CMake запрещает смешивать plain и keyworded (`PRIVATE`/
+`PUBLIC`) для одного target'а. Если добавить нашу зависимость — тоже
+без ключевых слов.
+
+Симптом: `CMake Error at CMakeLists.txt:NN (target_link_libraries):
+The plain signature for target_link_libraries has already been used`.
+
+### `CommandBase::GetResponseSchema` — `final`
+
+Наследники переопределяют **`GetRawResponseSchema`**, а не
+`GetResponseSchema`.
+
+Симптом: `error C3248: 'CommandBase::GetResponseSchema': function
+declared as 'final' cannot be overridden`.
+
+Почему так: Archicad использует response schema для валидации;
+failing command возвращает `{"error": {...}}`, что схема не принимает,
+поэтому `GetResponseSchema` в базовом возвращает пустоту.
+Документированная схема — через `GetRawResponseSchema`.
+
+### FetchContent zstd: `SOURCE_SUBDIR build/cmake`
+
+В корне репозитория zstd лежит «SDK»-CMakeLists (не создаёт
+библиотечных таргетов). Рабочий проект — в `build/cmake`. Без
+`SOURCE_SUBDIR build/cmake` в `FetchContent_Declare` CMake подхватит
+корневой файл и таргет `libzstd_static` не появится.
+
+Симптом: `CMake Error at CMakeLists.txt:NN (message): zstd: не найден
+CMake target после FetchContent.`
+
+### Матрица workflow: `fail-fast: false` обязателен
+
+По умолчанию GitHub Actions `fail-fast: true` — падение одной версии
+(например AC30 с RC-DevKit) **отменяет все остальные**. Нам нужны
+AC26 независимо от судьбы AC28/29/30.
+
+В `.github/workflows/archicad_addon.yml` в обоих матрицах
+(`build_win`, `build_mac`) должен быть `fail-fast: false`.
+
+### AC30: RC-DevKit недоступен
+
+В матрице AC30 качается с `dl.graphisoft.com/release-candidate/30/`,
+который сейчас падает. Пока не появится DevKit 30 на GitHub releases —
+строка закомментирована в обеих матрицах. Вернуть, когда опубликуют.
+
+### `Re-run jobs` не подхватывает свежие правки
+
+См. 2a. Всегда `Run workflow` заново.
+
 ### AC26: `CreateObjects` падает с `-2130313112`
 
-`ACAPI_Element_Create` не создаёт Object на Archicad 26 в некоторых
-конфигурациях. Симптом: `{"error": {"code": -2130313112,
-"message": "Failed to create new Object"}}`. Полилинии, плиты,
-колонны через тот же аддон создаются нормально — проблема именно
-с library parts.
-
-**Обход:** `RotateElementsByAngle` с `withCopy: true` + `ModifyObjects`
-для сдвига/поворота копии. Проверено на живом.
+`ACAPI_Element_Create` не создаёт Object на AC26 в некоторых
+конфигурациях. Обход: `RotateElementsByAngle` с `withCopy: true` +
+`ModifyObjects`.
 
 ### `ModifyObjects` не ставит `dimensions.x` напрямую
 
-При `useFixSize: true` (по умолчанию у библиотечных объектов)
-параметр `dimensions.x` в `ModifyObjects` игнорируется молча. Надо
-явно передавать `useFixSize: false` в том же вызове.
-
-**Важно:** после этого длина управляется через **`MEP_StraightLength`**
-(GDL-параметр), а не через `A`. `A` — производный, пересчитывается
-сам после установки `MEP_StraightLength`.
+При `useFixSize: true` (по умолчанию) `dimensions.x` игнорируется.
+Явно `useFixSize: false` в том же вызове. Длина — через
+**`MEP_StraightLength`** (GDL-параметр). `A` — производный.
 
 ### GDL-параметры пересчитываются асинхронно
 
-`SetGDLParametersOfElements` возвращает `success: true` сразу, но
-значение читается старым ещё несколько сотен миллисекунд. Если надо
-проверить — подождать `time.sleep(0.3-0.5)` или перечитать дважды.
+`SetGDLParametersOfElements` возвращает `success: true` сразу,
+но значение читается старым ещё 100-500 мс. При проверке —
+`time.sleep(0.3-0.5)` или перечитать дважды.
 
 ### `EntityType.BIM` не существует
 
-В Python-коде (IFC Explorer) правильный тип для Object —
-`EntityType.BIM_OBJECT`. Ошибка `AttributeError: type object
-'EntityType' has no attribute 'BIM'` — признак короткого имени.
+Правильный тип для Object — `EntityType.BIM_OBJECT`.
 
 ### `archicad_get_elements` не пишет `libPart` в параметры
 
 Возвращает `element_type`, `bbox_*`, `ArchicadDetail/origin.*`,
-`story_index`, но **не** `ArchicadDetail/libPart.name`. Чтобы
-определить библиотечный элемент — отдельно звать
-`GetDetailsOfElements` и смотреть `details.libPart.name`.
+`story_index`, но **не** `libPart.name`. Определять библиотечный
+элемент — через `GetDetailsOfElements` → `details.libPart.name`.
 
 ### Палитра загружается последней
 
 `TapirPalette::Instance()` в конце `Initialize` обёрнута в `try/catch`.
-Если упадёт, команды **до** неё работают; **после** — нет. Всегда
-добавляй новые команды **до** этого блока (см. #516).
+Если упадёт — команды **до** неё работают, **после** — нет. Всегда
+добавляй команды **до** этого блока (#516).
 
-### `@fresh` в `AI_CHANGES` — не значит «пиши в fresh»
+### `@fresh` в пути ≠ запись в fresh
 
-Bridge пишет **всегда в `WORK_BRANCH`** (см. раздел 0.2). Алиас
-`@work` и `@fresh` — оба резолвятся в `WORK_BRANCH`. Чтение идёт
-честно по указанному ref.
+Bridge пишет всегда в `WORK_BRANCH`. Алиасы `@work` и `@fresh`
+резолвятся в `WORK_BRANCH`. Чтение честно по указанному ref.
 
 ---
 
 ## 6. Стиль кода
 
-- **C++17** (AC26-28), **C++20** (AC29+). Не используй более
-  свежие фичи без необходимости.
-- **Отступ — 4 пробела**, стиль GS/Graphisoft.
-- **Пробел перед скобкой вызова:** `Foo (args)`, `if (x)`, `for (...)`.
-- **`GS::ObjectState`** для входов/выходов. `std::unordered_map`
-  внутри, если нужен быстрый доступ.
-- **Namespace** — `TapirCommand`, единый. Отдельные не заводить.
-- **Логирование** — `ACAPI_WriteReport(...)` для важных событий,
-  `DBPrintf` для отладочных.
-- **Undoable command**: если команда меняет модель — оборачивай в
-  `ACAPI_CallUndoableCommand("CommandName", [&]() { ... })`.
+- C++17 (AC26-28), C++20 (AC29+).
+- Отступ — 4 пробела, стиль GS/Graphisoft.
+- Пробел перед скобкой: `Foo (args)`, `if (x)`, `for (...)`.
+- `GS::ObjectState` для входов/выходов.
+- Namespace — `TapirCommand`, единый.
+- Undoable command: `ACAPI_CallUndoableCommand("Name", [&]() { ... })`.
+- Комментарии — по-русски в новых файлах.
 
 ---
 
-## 7. Тесты и замеры
+## 7. Тесты
 
-- **Юнит-тестов в аддоне нет** — архитектура Add-On не позволяет.
-  Проверка — только на живом проекте.
-- **Python-клиент** — `tapir_commands.py` в IFC Explorer. Правки
-  клиента — отдельная задача.
-- **Замер** — обязателен для bulk-команд. Сравнивать: JSON-путь (текущий)
-  vs base64+msgpack+zstd (новый) на одном наборе. Результат — в раздел 9.
+Юнит-тестов в аддоне **нет** — архитектура Add-On не позволяет.
+Проверка — только на живом Archicad через AI Bridge (см. 2a).
+Замеры — в разделе 9.
 
 ---
 
 ## 8. Границы
 
 ### Можно
-
-- Добавлять новые команды.
-- Переписывать внутренности существующих команд, если это не меняет
-  их JSON-схему входа/выхода.
-- Добавлять опциональные параметры с дефолтами (backward compatible).
-- Оптимизировать ACAPI-вызовы внутри существующих команд.
+- Новые команды.
+- Переписывать внутренности существующих (схема входа/выхода неизменна).
+- Опциональные параметры с дефолтами.
+- Оптимизировать ACAPI-вызовы.
 
 ### Нельзя
-
-- Менять namespace команды (`TapirCommand` — `final`).
+- Менять namespace (`final`).
 - Ломать JSON-схему существующих команд.
-- Удалять команды без явного запроса пользователя.
-- Пытаться сделать свой HTTP-сервер / endpoint — невозможно.
-- Пушить в `main` или `work` — только `fresh` (или рабочая ветка
-  текущей задачи).
+- Удалять команды.
+- Свой HTTP-сервер / endpoint.
+- Пушить в `main` или `work` — только `fresh`.
 
 ### Под вопросом
-
-- Возвращать ли изменения в upstream. Отложено: сначала пусть bulk
-  докажет себя 1-2 месяца, потом решаем про PR.
-- Мержить ли `fresh` и `work`. Пока нет — `work` служит каналом для
-  экспериментов с upstream-совместимостью.
+- PR в upstream — отложено (пусть bulk докажет себя 1-2 месяца).
+- Мерж `fresh` и `work` — пока нет.
 
 ---
 
 ## 9. Замеры
 
-| Дата | Что меряли | JSON | Bulk | Отношение |
+| Дата | Что | JSON | Bulk | Отношение |
 |---|---|---|---|---|
 | — | — | — | — | — |
 
@@ -391,22 +451,30 @@ Bridge пишет **всегда в `WORK_BRANCH`** (см. раздел 0.2). А
 
 ## 10. История решений
 
-**2026-10-05:** Решено делать base64+msgpack+zstd в форке, а не ждать
-upstream. Причины: upstream не двигается; наш форк уже сильно впереди;
-«честность» = правильно указать fork в README и не жаловаться в
-upstream issues, а не отдавать всё туда немедленно.
+**2026-10-05:** base64+msgpack+zstd в форке, не ждём upstream.
 
-**2026-10-05:** Решено вендорить msgpack-cxx и zstd в репо, а не
-требовать vcpkg/brew. Причина: аддон должен собираться «из коробки».
-
-**2026-10-05:** Написан `BulkPing` (шаг 1). Транспорт base64
-Python → C++ работает. Дальше — zstd, потом msgpack.
+**2026-10-05:** Вендорим msgpack-cxx и zstd в репо (FetchContent),
+без vcpkg/brew.
 
 **2026-10-05:** `WORK_BRANCH` переключён с `ai_bridge/work` на `fresh`.
-Bridge теперь пишет в `fresh`, `work` остаётся бэкапом.
 
-**2026-10-05:** В UI Bridge (вкладка GitHub) добавлена read-only
-строка «Рабочая ветка: fresh». Значение = `WORK_BRANCH`.
+**2026-10-05:** В UI Bridge (вкладка GitHub) добавлена read-only строка
+«Рабочая ветка: fresh».
+
+**2026-10-06:** `BulkPing` (шаг 1) собран и работает: base64 + zstd.
+`zstd_version=10506` (1.5.6) в ответе. Следующий шаг — msgpack.
+
+**2026-10-06:** В workflow `archicad_addon.yml` добавлен `fail-fast: false`
+в обе матрицы; AC30 временно закомментирован (RC-DevKit недоступен).
+
+**2026-10-06:** `CommandBase::GetResponseSchema` выяснен как `final` —
+наследники переопределяют `GetRawResponseSchema`.
+
+**2026-10-06:** Graphisoft `CMakeCommon.cmake` использует plain
+`target_link_libraries` — все добавления без `PRIVATE`/`PUBLIC`.
+
+**2026-10-06:** zstd подключается через `FetchContent` со
+`SOURCE_SUBDIR build/cmake`.
 
 ---
 
@@ -420,4 +488,4 @@ Bridge теперь пишет в `fresh`, `work` остаётся бэкапо�
 ---
 
 _Если этот файл устарел — правь его. Он живёт здесь как точка
-входа для новых сессий и чтобы не терять контекст между перерывами._
+входа для новых сессий._
