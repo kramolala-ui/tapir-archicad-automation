@@ -43,22 +43,43 @@ set (ZSTD_LEGACY_SUPPORT    OFF CACHE BOOL "" FORCE)
 
 FetchContent_Declare (
     zstd
-    URL      https://github.com/facebook/zstd/releases/download/v1.5.6/zstd-1.5.6.tar.gz
-    URL_HASH SHA256=8c29e06cf42aacc1eafc4077ae2ec6c6fcb96a626157e0593d5e82a34fd403c1
+    URL          https://github.com/facebook/zstd/releases/download/v1.5.6/zstd-1.5.6.tar.gz
+    URL_HASH     SHA256=8c29e06cf42aacc1eafc4077ae2ec6c6fcb96a626157e0593d5e82a34fd403c1
+    # В корне репозитория zstd лежит «SDK»-CMakeLists, который НЕ
+    # объявляет библиотечные таргеты. Рабочий проект — в build/cmake,
+    # и именно его надо подключать как subdirectory.
+    SOURCE_SUBDIR build/cmake
     DOWNLOAD_EXTRACT_TIMESTAMP TRUE
 )
 FetchContent_MakeAvailable (zstd)
 
-# Имя static-таргета в zstd менялось между версиями.
+# Имя static-таргета в zstd менялось между версиями. Пробуем
+# несколько вариантов; если ни один не найден — печатаем список
+# всех доступных таргетов для диагностики.
 if (TARGET libzstd_static)
     set (ZSTD_LINK_TARGET libzstd_static)
 elseif (TARGET zstd_static)
     set (ZSTD_LINK_TARGET zstd_static)
+elseif (TARGET libzstd)
+    set (ZSTD_LINK_TARGET libzstd)
 elseif (TARGET zstd)
     set (ZSTD_LINK_TARGET zstd)
 else ()
+    message (STATUS "zstd: доступные CMake-таргеты после FetchContent:")
+    get_property (_zstd_targets DIRECTORY PROPERTY BUILDSYSTEM_TARGETS)
+    foreach (_t IN LISTS _zstd_targets)
+        message (STATUS "  target: ${_t}")
+    endforeach ()
     message (FATAL_ERROR "zstd: не найден CMake target после FetchContent.")
 endif ()
 
 target_link_libraries (AddOn PRIVATE ${ZSTD_LINK_TARGET})
-target_include_directories (AddOn SYSTEM PRIVATE ${zstd_SOURCE_DIR}/lib)
+# Include-путь: у libzstd_static PUBLIC include — lib/. На всякий случай
+# добавляем и его (идемпотентно).
+target_include_directories (AddOn SYSTEM PRIVATE
+    ${zstd_SOURCE_DIR}/lib
+    ${zstd_SOURCE_DIR}/lib/common
+    ${zstd_SOURCE_DIR}/lib/dict
+    ${zstd_SOURCE_DIR}/lib/compress
+    ${zstd_SOURCE_DIR}/lib/decompress
+)
