@@ -636,15 +636,17 @@ GS::ObjectState BulkGetTextsCommand::Execute (
             }
         }
 
-        pk.pack_map (3);
-        pk.pack (std::string ("elementId")); pk.pack (guidStr);
-        pk.pack (std::string ("type"));      pk.pack (typeStr);
-        pk.pack (std::string ("text"));      pk.pack (textStr);
+        nlohmann::ordered_json row;
+        row["elementId"] = guidStr;
+        row["type"] = typeStr;
+        row["text"] = textStr;
+        out["rows"].push_back (row);
     }
 
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
     std::string outCompression;
     const std::string outB64 =
-        EncodeEnvelope (outBuf.data (), outBuf.size (), outCompression);
+        EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
 
     GS::ObjectState response;
     response.Add ("payload_b64", GS::UniString (outB64.c_str ()));
