@@ -866,6 +866,19 @@ Bridge пишет всегда в `WORK_BRANCH`. Алиасы `@work` и `@fresh
 **2026-10-06:** zstd подключается через `FetchContent` со
 `SOURCE_SUBDIR build/cmake`.
 
+**2026-10-06:** msgpack_cxx — `GIT_TAG cpp-6.1.1` + `GIT_SHALLOW`
+вместо URL+URL_HASH (релизные tarball'ы пересобираются, SHA256
+нестабилен); `SOURCE_SUBDIR include` (в корне msgpack лежит
+CMakeLists с `FIND_PACKAGE(Boost)`); `MSGPACK_NO_BOOST` (иначе
+sysdep.hpp тянет `<boost/predef/other/endian.h>`).
+
+**2026-10-06:** Собраны 4 bulk-команды: `BulkGetPropertyValues`,
+`BulkGetTexts`, `BulkSetTexts`, `BulkFindReplaceText` (плюс `BulkPing`
+ранее). Общий транспорт — `DecodeEnvelope`/`EncodeEnvelope`; запись
+текста — через `SetTextContentAndParagraphs`; мутации — под
+`ACAPI_CallUndoableCommand` (один undo на батч, dry_run без пустых
+undo). Исходник — `archicad-addon/Sources/BulkCommands.hpp/.cpp`.
+
 ---
 
 ## 11. Контакты и ссылки
