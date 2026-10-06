@@ -1377,6 +1377,10 @@ GSErrCode Initialize (void)
             bulkCommands, "0.1.0",
             "(experimental, v0.1.0) Universal bulk write. Currently supports story_index, layer_index, object_pos_x/pos_y/level/angle (Object/Lamp). GDL/*, Archicad/*, class/*, text — accepted but reported in ignored_not_implemented[] (to be implemented). bbox_* — read-only. Input payload: {entities: [{guid, parameters: {...}}], dry_run?: bool=false}. Output payload: {per_source: [{guid, applied, ignored_readonly, ignored_not_implemented, ignored_unknown, errors}], applied_count, errors_count, dry_run}. One undo barrier for the whole batch."
         );
+        err |= RegisterCommand<BulkDeleteElementsCommand> (
+            bulkCommands, "0.1.0",
+            "Bulk-delete elements in one Execute. Input payload: {guids: [\"guid\", ...]}. Output payload: {per_source: [{guid, deleted, error}], deleted_count, errors_count}. One undo barrier for the whole batch."
+        );
         AddCommandGroup (bulkCommands);
     }
 
