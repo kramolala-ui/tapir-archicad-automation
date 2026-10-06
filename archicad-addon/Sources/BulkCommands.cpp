@@ -504,31 +504,20 @@ GS::ObjectState BulkGetPropertyValuesCommand::Execute (
         }
 
         for (size_t k = 0; k < K; ++k) {
-            pk.pack_map (2);
-            pk.pack (std::string ("propertyId"));
-            pk.pack (propGuids[k]);
-            pk.pack (std::string ("value"));
-            pk.pack (values[k]);
+            nlohmann::ordered_json pv;
+            pv["propertyId"] = propGuids[k];
+            pv["value"] = values[k];
+            row["propertyValues"].push_back (pv);
             if (!values[k].empty ()) ++valuesCount;
         }
+        out["rows"].push_back (row);
     }
 
     // ---- 3. Сжать ответ и закодировать ----
-    std::vector<uint8_t> outBytes (
-        reinterpret_cast<const uint8_t*> (outBuf.data ()),
-        reinterpret_cast<const uint8_t*> (outBuf.data ()) + outBuf.size ());
-
-    std::string outCompression = "none";
-    std::vector<uint8_t> toSend = outBytes;
-    {
-        auto compressed = ZstdCompress (outBytes);
-        if (!compressed.empty ()) {
-            toSend.swap (compressed);
-            outCompression = "zstd";
-        }
-    }
-
-    const std::string outB64 = Base64Encode (toSend);
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 =
+        EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
 
     GS::ObjectState response;
     response.Add ("payload_b64", GS::UniString (outB64.c_str ()));
