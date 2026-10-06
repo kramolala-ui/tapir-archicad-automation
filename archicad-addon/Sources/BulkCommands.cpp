@@ -1031,6 +1031,7 @@ GS::ObjectState BulkFindReplaceTextCommand::Execute (
                 ++replacedCount;
             }
         }
+        return NoError;
     };
 
     // Undo-барьер только для РЕАЛЬНОЙ мутации. При dry_run модель не
