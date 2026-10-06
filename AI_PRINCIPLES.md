@@ -509,6 +509,50 @@ def bulk_get_property_values(conn, element_guids, property_guids):
 
 ---
 
+## 4e. Python-клиент (IFC_analyzer)
+
+**Где живёт.** Python-клиент — в проекте **IFC_analyzer**, не здесь.
+Путь: `C:\Python_projects\IFC_analyzer\plugins\archicad_plugin\bulk_connection.py`.
+
+**Схема.** Отдельный класс `BulkConnection`, независимый от
+`TapirConnection`. Переиспользует только транспорт (`run_command`)
+через конструктор:
+
+```python
+from plugins.archicad_plugin.bulk_connection import BulkConnection, BulkError
+
+bc = BulkConnection(port=19724)                # создаст свой TapirConnection
+bc = BulkConnection(tapir=existing_tapir_conn) # переиспользует чужой
+```
+
+**Методы:**
+
+```python
+bc.ping(b'hello')                          # {size, preview_hex, compression, zstd_version}
+bc.get_property_values(elems, props, as_dict=True)
+                                           # {elementId: {propertyId: value}}
+bc.get_texts(guids)                        # [{elementId, type, text}]
+bc.get_texts_dict(guids, text_only=False)  # {elementId: text}
+bc.get_text(guid)                          # Optional[str]
+bc.set_texts([{elementId, text}])          # {updated, total, errors}
+bc.set_text(guid, text)                    # bool
+bc.find_replace_text(find, replace, elements=None,
+                     case_sensitive=True, dry_run=True)
+                                           # {scanned_count, matched_count, replaced_count, matches}
+
+bc.tapir                                   # доступ к нижнему TapirConnection
+```
+
+**Зависимости:** `msgpack>=1.0.0`, `zstandard>=0.20.0` (добавлены в
+`requirements.txt` IFC_analyzer).
+
+**Ограничения (см. раздел 5):**
+- Запись Label и Text с удлинением текста — баг AC26 API.
+- Чтение Label возвращает мусор (текст формируется из GDL).
+- Часть Text (единично) может вернуть мусорный символ.
+
+---
+
 ## 5. Известные грабли
 
 ### Graphisoft `target_link_libraries` — plain signature
