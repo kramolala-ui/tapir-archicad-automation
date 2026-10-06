@@ -96,6 +96,66 @@ LLM (AI Bridge, @fresh)
 
 ---
 
+## 2b. Поиск по GitHub-репо (2026-10-06)
+
+**Не читай файлы слайсами, чтобы найти что-то.** В Bridge добавлен
+`action=search` с параметром `github_repo`. Он обходит дерево репо,
+читает файлы через кэш и ищет regex построчно.
+
+**Формат:**
+
+```json
+===AI_REQUEST===
+[
+  {"action": "search",
+   "pattern": "GetPropertyValueString",
+   "github_repo": "kramolala-ui/tapir-archicad-automation@fresh",
+   "extensions": [".cpp", ".hpp"],
+   "context_lines": 2,
+   "max_matches": 50,
+   "reason": "зачем ищем"}
+]
+===AI_REQUEST===
+```
+
+**Параметры:**
+
+- `github_repo` — `owner/repo` или `owner/repo@ref` (можно `@fresh`,
+  `@main`, или явный ref). Если задан — поиск идёт в GitHub, не
+  локально.
+- `pattern` — regex (как в обычном action=search).
+- `extensions` — список `.cpp` / `.hpp` / `py` и т.п. (с точкой или без).
+- `file_glob` — `**/*.cpp` (fnmatch по полному пути или basename).
+- `include_files` — точные пути (только эти файлы).
+- `context_lines` — 0..10 строк до/после.
+- `max_matches` — 1..1000.
+- `case_sensitive` — bool (по умолчанию true).
+
+**Возврат:**
+
+```json
+{"ok": true,
+ "matches": [{"path": "archicad-addon/Sources/PropertyCommands.cpp",
+              "line": 181,
+              "text": "...",
+              "before": [...],
+              "after": [...]}],
+ "truncated": false,
+ "scanned_files": 37,
+ "scanned_lines": 48236,
+ "files_with_matches": [...],
+ "repo": "...", "ref": "...",
+ "source": "github"}
+```
+
+**Производительность:** 37 файлов / 48 236 строк — **20 секунд**.
+Кэш на диск: второй поиск по тем же файлам быстрее.
+
+**Реализация:** `GitHubProvider.search_pattern` → `GitHubService.search_pattern`
+→ `RequestHandler._handle_search` (ветка `github_repo`).
+Правки сделаны 2026-10-06 в `agent_tools/*.py` локально, требуют
+**перезапуска AI Bridge** (см. 4b).
+
 ## 2a. Сборка, установка и проверка через AI Bridge
 
 ### Сборка — ТОЛЬКО через GitHub Actions
