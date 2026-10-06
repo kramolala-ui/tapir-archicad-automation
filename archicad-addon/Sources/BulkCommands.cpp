@@ -1161,6 +1161,29 @@ GS::ObjectState BulkGetElementDataCommand::Execute (
         // API_AttributeIndex — typedef Int32 в AC25/26, но класс в AC27+;
         // GetAttributeIndex (MigrationHelper.hpp) даёт int в обоих случаях.
         params["layer_index"] = static_cast<int64_t> (GetAttributeIndex (element.header.layer));
+        // ---- Object-specific fields ----
+        // Для Object (самый частый в проекте) читаем всё нужное
+        // для воссоздания в другом проекте (BulkCreateElementsFromData):
+        //   libPart (index + имя) — что именно ставить
+        //   pos/level/angle/ratios — куда и как
+        if (GetElemTypeId (element.header) == API_ObjectID) {
+            params["object_lib_part_index"] = static_cast<int64_t> (element.object.libInd);
+            params["object_pos_x"]  = element.object.pos.x;
+            params["object_pos_y"]  = element.object.pos.y;
+            params["object_level"]  = element.object.level;
+            params["object_angle"]  = element.object.angle;
+            params["object_x_ratio"] = element.object.xRatio;
+            params["object_y_ratio"] = element.object.yRatio;
+            // Имя libPart — для переноса между проектами (индексы
+            // разные, а имя стабильно).
+            API_LibPart lp = {};
+            lp.index = element.object.libInd;
+            if (ACAPI_LibPart_Get (&lp) == NoError) {
+                params["object_lib_part_name"] =
+                    GS::UniString (lp.docu_UName).ToCStr ().Get ();
+            }
+        }
+
         // ---- group info ----
         // element.header.groupGuid — нативная группировка Archicad (Ctrl+G).
         // APINULLGuid если элемент не в группе.
