@@ -547,3 +547,511 @@ GS::ObjectState BulkGetPropertyValuesCommand::Execute (
     response.Add ("values_count", static_cast<Int64> (valuesCount));
     return response;
 }
+
+
+// ---------------------------------------------------------------------
+//  BulkGetTextsCommand
+// ---------------------------------------------------------------------
+//
+// Вход (msgpack в payload_b64):  { "elements": ["guid", ...] }
+// Выход (msgpack в payload_b64): { "rows": [
+//   {"elementId": "...", "type": "Text"|"Label"|"", "text": "..."} ] }
+
+BulkGetTextsCommand::BulkGetTextsCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkGetTextsCommand::GetName () const
+{
+    return "BulkGetTexts";
+}
+
+GS::Optional<GS::UniString> BulkGetTextsCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkGetTextsCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64":    { "type": "string"  },
+            "compression":    { "type": "string"  },
+            "elements_count": { "type": "integer" },
+            "texts_count":    { "type": "integer" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkGetTextsCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    std::vector<std::string> elemGuids;
+    try {
+        auto oh = msgpack::unpack (reinterpret_cast<const char*> (raw.data ()), raw.size ());
+        auto obj = oh.get ();
+        auto m = obj.as<std::map<std::string, msgpack::object>> ();
+        auto itEl = m.find ("elements");
+        if (itEl == m.end ()) {
+            return CreateErrorResponse (APIERR_BADPARS,
+                "payload must contain 'elements'");
+        }
+        itEl->second.convert (elemGuids);
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+
+    msgpack::sbuffer outBuf;
+    msgpack::packer<msgpack::sbuffer> pk (&outBuf);
+    pk.pack_map (1);
+    pk.pack (std::string ("rows"));
+    pk.pack_array (elemGuids.size ());
+
+    size_t foundCount = 0;
+    for (const std::string& guidStr : elemGuids) {
+        std::string typeStr, textStr;
+        API_Element element = {};
+        element.header.guid = APIGuidFromString (guidStr.c_str ());
+        if (element.header.guid != APINULLGuid &&
+            ACAPI_Element_Get (&element) == NoError) {
+            API_ElementMemo memo = {};
+            GS::UniString txt;
+            if (ACAPI_Element_GetMemo (element.header.guid, &memo,
+                    APIMemoMask_TextContent | APIMemoMask_Paragraph) == NoError) {
+                txt = ReadTextFromMemo (memo);
+            }
+            ACAPI_DisposeElemMemoHdls (&memo);
+
+            if (element.header.typeID == API_TextID) {
+                typeStr = "Text";
+                textStr = txt.ToCStr ().Get ();
+                ++foundCount;
+            } else if (element.header.typeID == API_LabelID &&
+                       element.label.labelClass == APILblClass_Text) {
+                typeStr = "Label";
+                textStr = txt.ToCStr ().Get ();
+                ++foundCount;
+            }
+        }
+
+        pk.pack_map (3);
+        pk.pack (std::string ("elementId")); pk.pack (guidStr);
+        pk.pack (std::string ("type"));      pk.pack (typeStr);
+        pk.pack (std::string ("text"));      pk.pack (textStr);
+    }
+
+    std::string outCompression;
+    const std::string outB64 =
+        EncodeEnvelope (outBuf.data (), outBuf.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64", GS::UniString (outB64.c_str ()));
+    response.Add ("compression", GS::UniString (outCompression.c_str ()));
+    response.Add ("elements_count", static_cast<Int64> (elemGuids.size ()));
+    response.Add ("texts_count", static_cast<Int64> (foundCount));
+    return response;
+}
+
+
+// ---------------------------------------------------------------------
+//  BulkSetTextsCommand
+// ---------------------------------------------------------------------
+//
+// Вход (msgpack в payload_b64): { "rows": [{"elementId": "...", "text": "..."}] }
+// Выход (msgpack в payload_b64): { "updated": N, "total": M,
+//   "errors": [{"elementId": "...", "message": "..."}] }
+//
+// Переиспользует SetTextContentAndParagraphs (тот же путь, что
+// CreateTexts/ModifyTexts) через ApplyTextToElement.
+
+BulkSetTextsCommand::BulkSetTextsCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkSetTextsCommand::GetName () const
+{
+    return "BulkSetTexts";
+}
+
+GS::Optional<GS::UniString> BulkSetTextsCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkSetTextsCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64":   { "type": "string"  },
+            "compression":   { "type": "string"  },
+            "updated_count": { "type": "integer" },
+            "rows_count":    { "type": "integer" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkSetTextsCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    struct Row { std::string elementId; std::string text; };
+    std::vector<Row> rows;
+    try {
+        auto oh = msgpack::unpack (reinterpret_cast<const char*> (raw.data ()), raw.size ());
+        auto obj = oh.get ();
+        auto m = obj.as<std::map<std::string, msgpack::object>> ();
+        auto itRows = m.find ("rows");
+        if (itRows == m.end ()) {
+            return CreateErrorResponse (APIERR_BADPARS, "payload must contain 'rows'");
+        }
+        std::vector<std::map<std::string, msgpack::object>> rawRows;
+        itRows->second.convert (rawRows);
+        for (auto& rr : rawRows) {
+            auto itId = rr.find ("elementId");
+            auto itTx = rr.find ("text");
+            if (itId == rr.end () || itTx == rr.end ()) continue;
+            Row row;
+            itId->second.convert (row.elementId);
+            itTx->second.convert (row.text);
+            rows.push_back (row);
+        }
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+
+    struct ErrEntry { std::string elementId; std::string message; };
+    std::vector<ErrEntry> errors;
+    size_t updatedCount = 0;
+
+    for (const Row& row : rows) {
+        API_Guid guid = APIGuidFromString (row.elementId.c_str ());
+        if (guid == APINULLGuid) {
+            errors.push_back ({row.elementId, "invalid guid"});
+            continue;
+        }
+        API_Element element = {};
+        element.header.guid = guid;
+        if (ACAPI_Element_Get (&element) != NoError) {
+            errors.push_back ({row.elementId, "element not found"});
+            continue;
+        }
+        const GS::UniString text (row.text.c_str ());
+        GSErrCode e = NoError;
+        if (element.header.typeID == API_TextID) {
+            e = ApplyTextToElement (element, text, false);
+        } else if (element.header.typeID == API_LabelID &&
+                   element.label.labelClass == APILblClass_Text) {
+            e = ApplyTextToElement (element, text, true);
+        } else {
+            errors.push_back ({row.elementId, "unsupported element type"});
+            continue;
+        }
+        if (e == NoError) ++updatedCount;
+        else errors.push_back ({row.elementId, "change failed"});
+    }
+
+    msgpack::sbuffer outBuf;
+    msgpack::packer<msgpack::sbuffer> pk (&outBuf);
+    pk.pack_map (3);
+    pk.pack (std::string ("updated")); pk.pack (static_cast<uint64_t> (updatedCount));
+    pk.pack (std::string ("total"));   pk.pack (static_cast<uint64_t> (rows.size ()));
+    pk.pack (std::string ("errors"));
+    pk.pack_array (errors.size ());
+    for (const ErrEntry& ee : errors) {
+        pk.pack_map (2);
+        pk.pack (std::string ("elementId")); pk.pack (ee.elementId);
+        pk.pack (std::string ("message"));   pk.pack (ee.message);
+    }
+
+    std::string outCompression;
+    const std::string outB64 =
+        EncodeEnvelope (outBuf.data (), outBuf.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64", GS::UniString (outB64.c_str ()));
+    response.Add ("compression", GS::UniString (outCompression.c_str ()));
+    response.Add ("updated_count", static_cast<Int64> (updatedCount));
+    response.Add ("rows_count", static_cast<Int64> (rows.size ()));
+    return response;
+}
+
+
+// ---------------------------------------------------------------------
+//  BulkFindReplaceTextCommand
+// ---------------------------------------------------------------------
+//
+// Вход (msgpack в payload_b64):
+//   { "find": "...", "replace": "...",
+//     "case_sensitive": true, "dry_run": true,
+//     "elements": ["guid", ...]   // опц.; без него — все Text+Label проекта
+//   }
+// Выход (msgpack в payload_b64):
+//   { "find": "...", "replace": "...", "dry_run": bool,
+//     "scanned_count": N, "matched_count": M, "replaced_count": K,
+//     "matches": [{"elementId", "type", "before", "after"}] }
+
+BulkFindReplaceTextCommand::BulkFindReplaceTextCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkFindReplaceTextCommand::GetName () const
+{
+    return "BulkFindReplaceText";
+}
+
+GS::Optional<GS::UniString> BulkFindReplaceTextCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkFindReplaceTextCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64":    { "type": "string"  },
+            "compression":    { "type": "string"  },
+            "scanned_count":  { "type": "integer" },
+            "matched_count":  { "type": "integer" },
+            "replaced_count": { "type": "integer" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkFindReplaceTextCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    std::string findStr, replaceStr;
+    bool caseSensitive = true;
+    bool dryRun = true;
+    std::vector<std::string> elemGuids;
+    bool scopeAll = true;
+
+    try {
+        auto oh = msgpack::unpack (reinterpret_cast<const char*> (raw.data ()), raw.size ());
+        auto obj = oh.get ();
+        auto m = obj.as<std::map<std::string, msgpack::object>> ();
+        auto itF = m.find ("find");
+        if (itF == m.end ()) {
+            return CreateErrorResponse (APIERR_BADPARS, "payload must contain 'find'");
+        }
+        itF->second.convert (findStr);
+        auto itR = m.find ("replace");
+        if (itR != m.end ()) itR->second.convert (replaceStr);
+        auto itC = m.find ("case_sensitive");
+        if (itC != m.end ()) itC->second.convert (caseSensitive);
+        auto itD = m.find ("dry_run");
+        if (itD != m.end ()) itD->second.convert (dryRun);
+        auto itE = m.find ("elements");
+        if (itE != m.end ()) {
+            itE->second.convert (elemGuids);
+            scopeAll = false;
+        }
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+
+    if (findStr.empty ()) {
+        return CreateErrorResponse (APIERR_BADPARS, "find string is empty");
+    }
+
+    GS::Array<API_Guid> targets;
+    if (scopeAll) {
+        CollectAllTextElementGuids (targets);
+    } else {
+        for (const std::string& s : elemGuids) {
+            API_Guid g = APIGuidFromString (s.c_str ());
+            if (g != APINULLGuid) targets.Push (g);
+        }
+    }
+
+    // ASCII-aware поиск. Для не-ASCII регистр не меняется — такие строки
+    // матчатся точно. case_sensitive=true — точное совпадение.
+    std::string findLower = findStr;
+    for (char& c : findLower) if (c >= 'A' && c <= 'Z') c += 32;
+    auto findAt = [&](const std::string& hay, size_t from) -> size_t {
+        if (caseSensitive) return hay.find (findStr, from);
+        std::string h = hay;
+        for (char& c : h) if (c >= 'A' && c <= 'Z') c += 32;
+        return h.find (findLower, from);
+    };
+    auto replaceAll = [&](const std::string& src) -> std::string {
+        std::string result;
+        size_t pos = 0;
+        while (true) {
+            const size_t hit = findAt (src, pos);
+            if (hit == std::string::npos) {
+                result.append (src, pos, std::string::npos);
+                break;
+            }
+            result.append (src, pos, hit - pos);
+            result.append (replaceStr);
+            pos = hit + findStr.size ();
+        }
+        return result;
+    };
+
+    struct Match { std::string elementId; std::string type; std::string before; std::string after; };
+    std::vector<Match> matches;
+    size_t scannedCount = 0, matchedCount = 0, replacedCount = 0;
+
+    for (const API_Guid& guid : targets) {
+        API_Element element = {};
+        element.header.guid = guid;
+        if (ACAPI_Element_Get (&element) != NoError) continue;
+
+        std::string typeStr;
+        bool isLabel = false;
+        if (element.header.typeID == API_TextID) {
+            typeStr = "Text";
+        } else if (element.header.typeID == API_LabelID &&
+                   element.label.labelClass == APILblClass_Text) {
+            typeStr = "Label";
+            isLabel = true;
+        } else {
+            continue;
+        }
+
+        API_ElementMemo memo = {};
+        if (ACAPI_Element_GetMemo (guid, &memo,
+                APIMemoMask_TextContent | APIMemoMask_Paragraph) != NoError) {
+            ACAPI_DisposeElemMemoHdls (&memo);
+            continue;
+        }
+        const GS::UniString currentUs = ReadTextFromMemo (memo);
+        ACAPI_DisposeElemMemoHdls (&memo);
+        ++scannedCount;
+
+        const std::string current = currentUs.ToCStr ().Get ();
+        if (findAt (current, 0) == std::string::npos) continue;
+
+        const std::string next = replaceAll (current);
+        ++matchedCount;
+        Match mm;
+        mm.elementId = APIGuidToString (guid).ToCStr ().Get ();
+        mm.type = typeStr;
+        mm.before = current;
+        mm.after = next;
+        matches.push_back (mm);
+
+        if (dryRun) continue;
+
+        const GS::UniString nextUs (next.c_str ());
+        if (ApplyTextToElement (element, nextUs, isLabel) == NoError) {
+            ++replacedCount;
+        }
+    }
+
+    msgpack::sbuffer outBuf;
+    msgpack::packer<msgpack::sbuffer> pk (&outBuf);
+    pk.pack_map (7);
+    pk.pack (std::string ("find"));           pk.pack (findStr);
+    pk.pack (std::string ("replace"));        pk.pack (replaceStr);
+    pk.pack (std::string ("dry_run"));        pk.pack (dryRun);
+    pk.pack (std::string ("scanned_count"));  pk.pack (static_cast<uint64_t> (scannedCount));
+    pk.pack (std::string ("matched_count"));  pk.pack (static_cast<uint64_t> (matchedCount));
+    pk.pack (std::string ("replaced_count")); pk.pack (static_cast<uint64_t> (replacedCount));
+    pk.pack (std::string ("matches"));
+    pk.pack_array (matches.size ());
+    for (const Match& mm : matches) {
+        pk.pack_map (4);
+        pk.pack (std::string ("elementId")); pk.pack (mm.elementId);
+        pk.pack (std::string ("type"));      pk.pack (mm.type);
+        pk.pack (std::string ("before"));    pk.pack (mm.before);
+        pk.pack (std::string ("after"));     pk.pack (mm.after);
+    }
+
+    std::string outCompression;
+    const std::string outB64 =
+        EncodeEnvelope (outBuf.data (), outBuf.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64", GS::UniString (outB64.c_str ()));
+    response.Add ("compression", GS::UniString (outCompression.c_str ()));
+    response.Add ("scanned_count", static_cast<Int64> (scannedCount));
+    response.Add ("matched_count", static_cast<Int64> (matchedCount));
+    response.Add ("replaced_count", static_cast<Int64> (replacedCount));
+    return response;
+}
