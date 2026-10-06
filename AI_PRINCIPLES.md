@@ -811,6 +811,35 @@ subprocess.run(
   (TODO): один `Execute` = один undo-барьер = ACAPI-цикл внутри
   C++, без чередований клиент/сервер.
 
+### Каналы AI_CHANGES и AI_PROGRAM — разные проекты
+
+**AI_CHANGES** работает **только с tapir-archicad-automation** —
+относительные пути интерпретируются как пути этого репо
+(`github://kramolala-ui/tapir-archicad-automation@fresh/...`).
+
+**Файлы IFC_analyzer** (`C:\Python_projects\IFC_analyzer\`) в AI_CHANGES
+**не попадают** — там нет пути к ним. Если послать `path: "requirements.txt"`
+или `path: "plugins/archicad_plugin/foo.py"` — утилита попробует их
+найти в tapir-репо и упадёт с `old fragment not found` либо сделает
+`write` в несуществующую папку.
+
+**Правильный канал для IFC_analyzer** — `===AI_PROGRAM===` со
+скриптом, который пишет файлы напрямую через `Path.write_text`.
+Пример:
+
+```python
+from pathlib import Path
+ROOT = Path(r'C:\Python_projects\IFC_analyzer')
+(ROOT / 'plugins' / 'archicad_plugin' / 'bulk_connection.py').write_text(src, encoding='utf-8')
+```
+
+**Свежий пример (2026-10-06):** попытка записать `bulk_connection.py` и
+`requirements.txt` через AI_CHANGES — 2 ошибки, полный откат. Тот же
+содержимый файл через AI_PROGRAM script — применился за 2 секунды.
+
+**Правило:** tapir-репо → AI_CHANGES; IFC_analyzer → AI_PROGRAM script.
+Не смешивать.
+
 ### Ранее (до подтверждения): серия GetPropertyValuesOfElements может уронить Archicad
 
 Наблюдение 2026-10-06 в проекте «Шаблон гидравлики IFC»:
