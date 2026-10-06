@@ -9,6 +9,15 @@
 #include <cstdint>
 #include <cstring>
 
+// DevKit AC25/26 определяет `snprintf` как `_snprintf` (hack для старого
+// MSVC). nlohmann внутри использует std::snprintf — препроцессор
+// превращает это в std::_snprintf, которого нет в namespace std → C2039.
+// На AC27+ этот макрос убран, поэтому там сборка проходит. Снимаем
+// макрос перед подключением nlohmann — C++17 даёт std::snprintf из <cstdio>.
+#ifdef snprintf
+    #undef snprintf
+#endif
+
 #include <zstd.h>
 #include <nlohmann/json.hpp>
 
