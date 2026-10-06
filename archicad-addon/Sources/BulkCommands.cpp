@@ -130,6 +130,107 @@ std::vector<uint8_t> ZstdCompress (const std::vector<uint8_t>& src)
     return out;
 }
 
+// --- envelope helpers (общий транспорт для всех Bulk*-команд) ---------
+
+bool DecodeEnvelope (const GS::UniString& payloadB64,
+                     std::string compression,
+                     std::vector<uint8_t>& raw,
+                     std::string& errorOut)
+{
+    if (compression.empty ()) compression = "none";
+    raw = Base64Decode (payloadB64.ToCStr ().Get ());
+    if (compression == "zstd") {
+        std::vector<uint8_t> dec;
+        if (!ZstdDecompress (raw, dec, errorOut)) return false;
+        raw.swap (dec);
+        return true;
+    }
+    if (compression != "none") {
+        errorOut = "Unknown compression: '" + compression + "'";
+        return false;
+    }
+    return true;
+}
+
+std::string EncodeEnvelope (const void* data, size_t size,
+                            std::string& outCompression)
+{
+    std::vector<uint8_t> src (
+        reinterpret_cast<const uint8_t*> (data),
+        reinterpret_cast<const uint8_t*> (data) + size);
+    std::vector<uint8_t> toSend = src;
+    outCompression = "none";
+    auto comp = ZstdCompress (src);
+    if (!comp.empty ()) {
+        toSend.swap (comp);
+        outCompression = "zstd";
+    }
+    return Base64Encode (toSend);
+}
+
+// Чтение содержимого memo.textContent для Text/Label (обе версии API).
+GS::UniString ReadTextFromMemo (const API_ElementMemo& memo)
+{
+#ifdef ServerMainVers_2800
+    if (memo.textContent != nullptr) return *memo.textContent;
+#else
+    if (memo.textContent != nullptr) {
+        const GS::uchar_t* ustr =
+            reinterpret_cast<const GS::uchar_t*> (*memo.textContent);
+        if (ustr != nullptr) return GS::UniString (ustr);
+    }
+#endif
+    return GS::UniString ();
+}
+
+// Собрать GUID'ы всех Text + Label элементов проекта.
+void CollectAllTextElementGuids (GS::Array<API_Guid>& out)
+{
+    GS::Array<API_Guid> texts;
+    if (ACAPI_Element_GetElemList (API_TextID, &texts) == NoError) {
+        for (const API_Guid& g : texts) out.Push (g);
+    }
+    GS::Array<API_Guid> labels;
+    if (ACAPI_Element_GetElemList (API_LabelID, &labels) == NoError) {
+        for (const API_Guid& g : labels) out.Push (g);
+    }
+}
+
+// Общий путь записи: SetTextContentAndParagraphs + маска полей + Change.
+// isLabel = true, если element.label.u.text; false — для element.text.
+GSErrCode ApplyTextToElement (API_Element& element,
+                              const GS::UniString& text,
+                              bool isLabel)
+{
+    API_Element mask = {};
+    API_ElementMemo clipMemo = {};
+    if (isLabel) {
+        SetTextContentAndParagraphs (clipMemo, element.label.u.text, text);
+        ACAPI_ELEMENT_MASK_SET (mask, API_LabelType, u.text.nLine);
+        ACAPI_ELEMENT_MASK_SET (mask, API_LabelType, u.text.useEolPos);
+        ACAPI_ELEMENT_MASK_SET (mask, API_LabelType, u.text.nonBreaking);
+        ACAPI_ELEMENT_MASK_SET (mask, API_LabelType, u.text.width);
+        ACAPI_ELEMENT_MASK_SET (mask, API_LabelType, u.text.height);
+#ifndef ServerMainVers_2800
+        ACAPI_ELEMENT_MASK_SET (mask, API_LabelType, u.text.charCode);
+#endif
+    } else {
+        SetTextContentAndParagraphs (clipMemo, element.text, text);
+        ACAPI_ELEMENT_MASK_SET (mask, API_TextType, nLine);
+        ACAPI_ELEMENT_MASK_SET (mask, API_TextType, useEolPos);
+        ACAPI_ELEMENT_MASK_SET (mask, API_TextType, nonBreaking);
+        ACAPI_ELEMENT_MASK_SET (mask, API_TextType, width);
+        ACAPI_ELEMENT_MASK_SET (mask, API_TextType, height);
+#ifndef ServerMainVers_2800
+        ACAPI_ELEMENT_MASK_SET (mask, API_TextType, charCode);
+#endif
+    }
+    const GSErrCode err = ACAPI_Element_Change (&element, &mask, &clipMemo,
+        APIMemoMask_TextContent | APIMemoMask_Paragraph, true);
+    ACAPI_DisposeElemMemoHdls (&clipMemo);
+    return err;
+}
+
 }  // namespace
 
 
