@@ -3140,6 +3140,8 @@ GS::ObjectState BulkSetElementDataCommand::Execute (
             API_Element mask = {};
             ACAPI_ELEMENT_MASK_CLEAR (mask);
             bool hasElementChanges = false;
+            std::vector<GdlChange>   gdlChanges;
+            std::vector<ClassChange> classChanges;
 
             for (auto it = task.parameters.begin (); it != task.parameters.end (); ++it) {
                 const std::string key = it.key ();
