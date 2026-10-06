@@ -1711,6 +1711,10 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
     // Mesh реализован только для AC26. На остальных версиях — graceful stub.
     // Причины: (1) ACAPI_3D_GetCurrentWindowSight есть только в AC26; (2) на
     // AC29 Model.hpp ломает GDL/PropertyListImp.hpp. См. AI_PRINCIPLES §10a.
+    //
+    // На 25/27/28/29 elemHead в этой ветке не используется — глушим C4100,
+    // иначе CI с /WX падает ещё на этапе компиляции.
+    (void) elemHead;
     errOut = "mesh not supported on this Archicad version (only AC26 for now)";
     return false;
 #else
