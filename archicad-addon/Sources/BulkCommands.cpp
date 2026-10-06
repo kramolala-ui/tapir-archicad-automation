@@ -2446,3 +2446,184 @@ GS::ObjectState BulkGetGroupMembersCommand::Execute (
     response.Add ("groups_count", static_cast<Int64> (groupGuids.size ()));
     return response;
 }
+
+
+// ---------------------------------------------------------------------
+//  BulkMoveElementsCommand
+// ---------------------------------------------------------------------
+//
+// Bulk-перенос элементов по вектору (dx,dy,dz) в одном Execute.
+// Один undo-барьер на весь батч: Ctrl+Z откатывает все перемещения.
+//
+// Вход (msgpack в payload_b64):
+//   {
+//     "moves": [
+//       { "source_guid": "guid",
+//         "dx": 2.0, "dy": 0.0, "dz": 0.0,
+//         "copy": false }   // default false
+//     ]
+//   }
+//
+// Выход (msgpack в payload_b64):
+//   {
+//     "per_source": [ { "source_guid": "...", "moved": true|false,
+//                       "error": null | "<текст>" } ],
+//     "moved_count":  N,
+//     "errors_count": M
+//   }
+
+BulkMoveElementsCommand::BulkMoveElementsCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkMoveElementsCommand::GetName () const
+{
+    return "BulkMoveElements";
+}
+
+GS::Optional<GS::UniString> BulkMoveElementsCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkMoveElementsCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64":  { "type": "string" },
+            "compression":  { "type": "string" },
+            "moved_count":  { "type": "integer" },
+            "errors_count": { "type": "integer" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkMoveElementsCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    struct MoveTask {
+        std::string sourceGuid;
+        double dx = 0.0;
+        double dy = 0.0;
+        double dz = 0.0;
+        bool copy = false;
+    };
+    std::vector<MoveTask> moves;
+
+    try {
+        nlohmann::json j = nlohmann::json::from_msgpack (raw);
+        if (!j.contains ("moves") || !j["moves"].is_array ()) {
+            return CreateErrorResponse (APIERR_BADPARS,
+                "payload must contain 'moves' array");
+        }
+        for (const auto& item : j["moves"]) {
+            if (!item.contains ("source_guid")) continue;
+            MoveTask t;
+            t.sourceGuid = item["source_guid"].get<std::string> ();
+            if (item.contains ("dx"))   t.dx   = item["dx"].get<double> ();
+            if (item.contains ("dy"))   t.dy   = item["dy"].get<double> ();
+            if (item.contains ("dz"))   t.dz   = item["dz"].get<double> ();
+            if (item.contains ("copy")) t.copy = item["copy"].get<bool> ();
+            moves.push_back (t);
+        }
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+
+    nlohmann::ordered_json out;
+    out["per_source"]   = nlohmann::json::array ();
+    out["moved_count"]  = 0;
+    out["errors_count"] = 0;
+
+    size_t movedCount  = 0;
+    size_t errorsCount = 0;
+
+    ACAPI_CallUndoableCommand ("BulkMoveElements", [&] () -> GSErrCode {
+        for (const MoveTask& task : moves) {
+            nlohmann::ordered_json srcOut;
+            srcOut["source_guid"] = task.sourceGuid;
+            srcOut["moved"]       = false;
+            srcOut["error"]       = nullptr;
+
+            API_Guid srcGuid = APIGuidFromString (task.sourceGuid.c_str ());
+            if (srcGuid == APINULLGuid) {
+                srcOut["error"] = "source_guid is invalid";
+                out["per_source"].push_back (srcOut);
+                ++errorsCount;
+                continue;
+            }
+
+            API_Element element = {};
+            element.header.guid = srcGuid;
+            if (ACAPI_Element_Get (&element) != NoError) {
+                srcOut["error"] = "element not found";
+                out["per_source"].push_back (srcOut);
+                ++errorsCount;
+                continue;
+            }
+
+            GS::Array<API_Neig> elementsToEdit = { API_Neig (srcGuid) };
+            API_EditPars editPars = {};
+            editPars.typeID = APIEdit_Drag;
+            editPars.endC.x = task.dx;
+            editPars.endC.y = task.dy;
+            editPars.endC.z = task.dz;
+            editPars.withDelete = !task.copy;
+
+            const GSErrCode e = ACAPI_Element_Edit (&elementsToEdit, editPars);
+            if (e == NoError) {
+                srcOut["moved"] = true;
+                ++movedCount;
+            } else {
+                srcOut["error"] = std::string ("edit failed (code=") +
+                    std::to_string (static_cast<long long> (e)) + ")";
+                ++errorsCount;
+            }
+            out["per_source"].push_back (srcOut);
+        }
+        return NoError;
+    });
+
+    out["moved_count"]  = static_cast<uint64_t> (movedCount);
+    out["errors_count"] = static_cast<uint64_t> (errorsCount);
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 =
+        EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64",  GS::UniString (outB64.c_str ()));
+    response.Add ("compression",  GS::UniString (outCompression.c_str ()));
+    response.Add ("moved_count",  static_cast<Int64> (movedCount));
+    response.Add ("errors_count", static_cast<Int64> (errorsCount));
+    return response;
+}
