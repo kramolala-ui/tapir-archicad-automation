@@ -2627,3 +2627,219 @@ GS::ObjectState BulkMoveElementsCommand::Execute (
     response.Add ("errors_count", static_cast<Int64> (errorsCount));
     return response;
 }
+
+
+// ---------------------------------------------------------------------
+//  BulkRotateElementsCommand
+// ---------------------------------------------------------------------
+//
+// Bulk-поворот элементов на угол angle_rad вокруг центра.
+// Если center не задан — берём центр AABB элемента (ACAPI_Element_CalcBounds).
+// Один undo-барьер на весь батч.
+//
+// Вход (msgpack в payload_b64):
+//   {
+//     "rotations": [
+//       { "source_guid": "guid",
+//         "angle_rad": 1.5707963267948966,
+//         "center_x": 100.0, "center_y": 200.0,   // опц.: если нет — центр AABB
+//         "copy": false }
+//     ]
+//   }
+//
+// Выход (msgpack в payload_b64):
+//   {
+//     "per_source": [ { "source_guid": "...", "rotated": true|false,
+//                       "error": null | "<текст>" } ],
+//     "rotated_count": N,
+//     "errors_count":  M
+//   }
+
+namespace {
+
+GSErrCode RotateSingleElementByGuid (const API_Guid& elemGuid,
+                                     double angleRad,
+                                     bool hasCenter, const API_Coord& centerIn,
+                                     bool withCopy)
+{
+    API_Coord orig = centerIn;
+    if (!hasCenter) {
+        API_Elem_Head head = {};
+        head.guid = elemGuid;
+        API_Box3D box = {};
+        const GSErrCode boundsErr = ACAPI_Element_CalcBounds (&head, &box);
+        if (boundsErr != NoError) {
+            return boundsErr;
+        }
+        orig.x = (box.xMin + box.xMax) / 2.0;
+        orig.y = (box.yMin + box.yMax) / 2.0;
+    }
+
+    API_EditPars pars = {};
+    pars.typeID = APIEdit_Rotate;
+    pars.origC  = orig;
+
+    const double R = 1.0;
+    pars.begC.x = orig.x + R;
+    pars.begC.y = orig.y;
+    pars.begC.z = 0.0;
+    pars.endC.x = orig.x + R * std::cos (angleRad);
+    pars.endC.y = orig.y + R * std::sin (angleRad);
+    pars.endC.z = 0.0;
+    pars.withDelete = !withCopy;
+
+    GS::Array<API_Neig> neigs;
+    neigs.Push (API_Neig (elemGuid));
+    return ACAPI_Element_Edit (&neigs, pars);
+}
+
+}  // namespace
+
+BulkRotateElementsCommand::BulkRotateElementsCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkRotateElementsCommand::GetName () const
+{
+    return "BulkRotateElements";
+}
+
+GS::Optional<GS::UniString> BulkRotateElementsCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkRotateElementsCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64":   { "type": "string" },
+            "compression":   { "type": "string" },
+            "rotated_count": { "type": "integer" },
+            "errors_count":  { "type": "integer" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkRotateElementsCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    struct RotTask {
+        std::string sourceGuid;
+        double angleRad = 0.0;
+        bool hasCenter = false;
+        double cx = 0.0;
+        double cy = 0.0;
+        bool copy = false;
+    };
+    std::vector<RotTask> tasks;
+
+    try {
+        nlohmann::json j = nlohmann::json::from_msgpack (raw);
+        if (!j.contains ("rotations") || !j["rotations"].is_array ()) {
+            return CreateErrorResponse (APIERR_BADPARS,
+                "payload must contain 'rotations' array");
+        }
+        for (const auto& item : j["rotations"]) {
+            if (!item.contains ("source_guid")) continue;
+            if (!item.contains ("angle_rad")) continue;
+            RotTask t;
+            t.sourceGuid = item["source_guid"].get<std::string> ();
+            t.angleRad   = item["angle_rad"].get<double> ();
+            if (item.contains ("center_x") && item.contains ("center_y")) {
+                t.cx = item["center_x"].get<double> ();
+                t.cy = item["center_y"].get<double> ();
+                t.hasCenter = true;
+            }
+            if (item.contains ("copy")) t.copy = item["copy"].get<bool> ();
+            tasks.push_back (t);
+        }
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+
+    nlohmann::ordered_json out;
+    out["per_source"]    = nlohmann::json::array ();
+    out["rotated_count"] = 0;
+    out["errors_count"]  = 0;
+
+    size_t rotatedCount = 0;
+    size_t errorsCount  = 0;
+
+    ACAPI_CallUndoableCommand ("BulkRotateElements", [&] () -> GSErrCode {
+        for (const RotTask& task : tasks) {
+            nlohmann::ordered_json srcOut;
+            srcOut["source_guid"] = task.sourceGuid;
+            srcOut["rotated"]     = false;
+            srcOut["error"]       = nullptr;
+
+            API_Guid srcGuid = APIGuidFromString (task.sourceGuid.c_str ());
+            if (srcGuid == APINULLGuid) {
+                srcOut["error"] = "source_guid is invalid";
+                out["per_source"].push_back (srcOut);
+                ++errorsCount;
+                continue;
+            }
+
+            API_Coord center = {};
+            center.x = task.cx;
+            center.y = task.cy;
+
+            const GSErrCode e = RotateSingleElementByGuid (srcGuid,
+                task.angleRad, task.hasCenter, center, task.copy);
+            if (e == NoError) {
+                srcOut["rotated"] = true;
+                ++rotatedCount;
+            } else {
+                srcOut["error"] = std::string ("rotate failed (code=") +
+                    std::to_string (static_cast<long long> (e)) + ")";
+                ++errorsCount;
+            }
+            out["per_source"].push_back (srcOut);
+        }
+        return NoError;
+    });
+
+    out["rotated_count"] = static_cast<uint64_t> (rotatedCount);
+    out["errors_count"]  = static_cast<uint64_t> (errorsCount);
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 =
+        EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64",   GS::UniString (outB64.c_str ()));
+    response.Add ("compression",   GS::UniString (outCompression.c_str ()));
+    response.Add ("rotated_count", static_cast<Int64> (rotatedCount));
+    response.Add ("errors_count",  static_cast<Int64> (errorsCount));
+    return response;
+}
