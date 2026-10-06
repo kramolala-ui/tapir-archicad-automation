@@ -5,6 +5,12 @@
 // ModelerAPI — для BulkGetElementMesh (см. AI_PRINCIPLES.md §2c, §10a).
 // Заголовки лежат в Support/Modules/GSModelDevLib и GSModeler. Модули
 // линкуются автоматически через LinkGSLibrariesToProject (Tools/CMakeCommon.cmake).
+//
+// ⚠ Только AC26: на AC25/27/28/29 функция ACAPI_3D_GetCurrentWindowSight
+// отсутствует (error C3861 при компиляции), плюс на AC29 подключение
+// Model.hpp ломает GDL/PropertyListImp.hpp (каскад C2039/C3083).
+// Version-aware путь для 27+ — TODO (§10a). Пока mesh работает на AC26.
+#if defined (ServerMainVers_2600)
 #include "Model.hpp"
 #include "ModelElement.hpp"
 #include "ModelMeshBody.hpp"
@@ -14,6 +20,8 @@
 #include "exp.h"
 #include "Sight.hpp"
 #include "IAttributeReader.hpp"
+#endif
+
 #include <unordered_map>
 
 #include <string>
