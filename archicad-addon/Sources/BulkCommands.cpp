@@ -1919,3 +1919,179 @@ GS::ObjectState BulkFindReplaceTextCommand::Execute (
     response.Add ("replaced_count", static_cast<Int64> (replacedCount));
     return response;
 }
+
+
+// ---------------------------------------------------------------------
+//  BulkGetGroupMembersCommand
+// ---------------------------------------------------------------------
+//
+// Работа с нативными группами Archicad (Ctrl+G).
+//
+// Вход (msgpack в payload_b64):
+//   { "element_guids": ["guid", ...],   // опц.: для этих элементов найти
+//                                         //       родительскую группу
+//     "group_guids":   ["guid", ...],   // опц.: для этих групп развернуть
+//                                         //       членов
+//     "recursive":     true }            // default true: включать вложенные
+//                                         //       подгруппы
+//
+// Хотя бы одно из element_guids / group_guids должно быть непустым.
+//
+// Выход (msgpack в payload_b64):
+//   { "groups": [
+//       { "source_guid":   "<элемент или группа из запроса>",
+//         "source_kind":   "element" | "group",
+//         "group_guid":    "<guid группы>" | null,
+//         "member_guids":  ["...", ...]   // для source_kind=group
+//       }, ...
+//     ] }
+//
+// Зачем: клиент по одному элементу (клик по прибору) получает всю его
+// группу (обвязка, стояк). Или по уже известному group_guid разворачивает
+// членов без повторного обхода.
+
+BulkGetGroupMembersCommand::BulkGetGroupMembersCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkGetGroupMembersCommand::GetName () const
+{
+    return "BulkGetGroupMembers";
+}
+
+GS::Optional<GS::UniString> BulkGetGroupMembersCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkGetGroupMembersCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64":   { "type": "string"  },
+            "compression":   { "type": "string"  },
+            "elements_count":{ "type": "integer" },
+            "groups_count":  { "type": "integer" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkGetGroupMembersCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    std::vector<std::string> elementGuids;
+    std::vector<std::string> groupGuids;
+    bool recursive = true;
+
+    try {
+        nlohmann::json j = nlohmann::json::from_msgpack (raw);
+        if (j.contains ("element_guids")) {
+            for (const auto& s : j["element_guids"]) elementGuids.push_back (s.get<std::string> ());
+        }
+        if (j.contains ("group_guids")) {
+            for (const auto& s : j["group_guids"]) groupGuids.push_back (s.get<std::string> ());
+        }
+        if (j.contains ("recursive")) recursive = j["recursive"].get<bool> ();
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+
+    if (elementGuids.empty () && groupGuids.empty ()) {
+        return CreateErrorResponse (APIERR_BADPARS,
+            "payload must contain 'element_guids' or 'group_guids'");
+    }
+
+    nlohmann::ordered_json out;
+    out["groups"] = nlohmann::json::array ();
+
+    auto expandGroup = [&](const std::string& sourceGuid,
+                           const char* sourceKind,
+                           const API_Guid& groupGuid) {
+        nlohmann::ordered_json g;
+        g["source_guid"] = sourceGuid;
+        g["source_kind"] = sourceKind;
+        if (groupGuid == APINULLGuid) {
+            g["group_guid"]   = nullptr;
+            g["member_guids"] = nlohmann::json::array ();
+            out["groups"].push_back (g);
+            return;
+        }
+        g["group_guid"] = APIGuidToString (groupGuid).ToCStr ().Get ();
+        g["member_guids"] = nlohmann::json::array ();
+
+        GS::Array<API_Guid> members;
+        GSErrCode e = recursive
+            ? ACAPI_ElementGroup_GetAllGroupedElems (groupGuid, &members)
+            : ACAPI_ElementGroup_GetGroupedElems (groupGuid, &members);
+        if (e == NoError) {
+            for (const API_Guid& m : members) {
+                g["member_guids"].push_back (APIGuidToString (m).ToCStr ().Get ());
+            }
+        }
+        out["groups"].push_back (g);
+    };
+
+    // 1. element_guids: для каждого найти его группу, развернуть.
+    for (const std::string& eg : elementGuids) {
+        API_Guid elemGuid = APIGuidFromString (eg.c_str ());
+        if (elemGuid == APINULLGuid) {
+            expandGroup (eg, "element", APINULLGuid);
+            continue;
+        }
+        API_Guid parentGroup = APINULLGuid;
+        if (ACAPI_ElementGroup_GetGroup (elemGuid, &parentGroup) != NoError) {
+            parentGroup = APINULLGuid;
+        }
+        expandGroup (eg, "element", parentGroup);
+    }
+
+    // 2. group_guids: развернуть напрямую.
+    for (const std::string& gg : groupGuids) {
+        API_Guid groupGuid = APIGuidFromString (gg.c_str ());
+        if (groupGuid == APINULLGuid) {
+            expandGroup (gg, "group", APINULLGuid);
+            continue;
+        }
+        expandGroup (gg, "group", groupGuid);
+    }
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 =
+        EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64", GS::UniString (outB64.c_str ()));
+    response.Add ("compression", GS::UniString (outCompression.c_str ()));
+    response.Add ("elements_count", static_cast<Int64> (elementGuids.size ()));
+    response.Add ("groups_count", static_cast<Int64> (groupGuids.size ()));
+    return response;
+}
