@@ -1354,26 +1354,138 @@ void ApplyTranmat (const API_Tranmat& t, double& x, double& y, double& z)
 // (или найдётся путь через ModelerAPI::MeshBody) — здесь вернётся полная
 // реализация обхода 3D-компонент.
 //
-// Сам API доступа известен точно (см. AccumulateSolidBodyBounds в
-// ElementCommands.cpp:4127):
-//   API_ElemInfo3D info3D;
-//   ACAPI_ModelAccess_Get3DInfo (elemHead, &info3D);
-//   for (Int32 iBody = info3D.fbody; iBody <= info3D.lbody; ++iBody) {
-//       API_Component3D bodyComp = {};
-//       bodyComp.header.typeID = API_BodyID;
-//       bodyComp.header.index  = iBody;
-//       ACAPI_ModelAccess_GetComponent (&bodyComp);
-//       // bodyComp.body.xmin/xmax/... — точно рабочие поля;
-//       // для вершин/полигонов нужны точные имена (см. выше).
-//   }
-bool ExtractElementMesh (const API_Elem_Head& /*elemHead*/,
+// Реализация через ModelerAPI (см. DevKit Examples/ModelAccess_Test):
+//   1. ACAPI_3D_GetCurrentWindowSight — получить Sight активного окна.
+//      Работает только если активно 3D-окно; в FloorPlan вернёт nullptr.
+//   2. EXPGetModel(SightPtr, &Model, IAttributeReader*) — построить Model.
+//   3. Обход: Model::GetElement(i, &Element) — поиск по GetElemGuid().
+//   4. Element::GetTessellatedBody(iBody, &MeshBody)
+//      → MeshBody::GetPolygon(i, &Polygon)
+//      → Polygon::GetConvexPolygon(i, &ConvexPolygon)
+//      → ConvexPolygon::GetVertexIndex(k) → MeshBody::GetVertex(idx, &Vertex)
+//   5. Fan-триангуляция каждого ConvexPolygon.
+//
+// Все индексы у ModelerAPI 1-based (см. ModelAccess_Test_Exporter.cpp:334).
+// В vertices/triangles для msgpack — 0-based (стандарт для GL/VTK/ifcopenshell).
+bool ExtractElementMesh (const API_Elem_Head& elemHead,
                          bool /*applyTransform*/,
-                         std::vector<float>& /*outVertices*/,
-                         std::vector<uint32_t>& /*outTriangles*/,
+                         std::vector<float>& outVertices,
+                         std::vector<uint32_t>& outTriangles,
                          std::string& errOut)
 {
-    errOut = "not implemented (awaiting APIdefs_3D.h)";
-    return false;
+    outVertices.clear ();
+    outTriangles.clear ();
+
+    // ---- 1. Sight активного окна ----
+    void* sightRaw = nullptr;
+    if (ACAPI_3D_GetCurrentWindowSight (&sightRaw) != NoError || sightRaw == nullptr) {
+        errOut = "no 3D window is open; call TapirConnection.change_window('3DModel') first";
+        return false;
+    }
+
+    // ACAPI отдаёт адрес существующего Modeler::SightPtr (GS::SharedPtr<Sight>).
+    // Копируем — копия инкрементит refcount, живёт на время вызова, оригинал не трогаем.
+    auto* sightPtrPtr = static_cast<Modeler::SightPtr*> (sightRaw);
+    if (sightPtrPtr == nullptr) {
+        errOut = "invalid SightPtr from ACAPI_3D_GetCurrentWindowSight";
+        return false;
+    }
+    Modeler::SightPtr sight = *sightPtrPtr;
+
+    // ---- 2. AttributeReader + EXPGetModel ----
+    GS::Owner<Modeler::IAttributeReader> attrReader (
+        ACAPI_Attribute_GetCurrentAttributeSetReader ());
+    if (attrReader == nullptr) {
+        errOut = "failed to get IAttributeReader";
+        return false;
+    }
+
+    ModelerAPI::Model model;
+    if (EXPGetModel (sight, &model, attrReader.Get ()) != NoError) {
+        errOut = "EXPGetModel failed";
+        return false;
+    }
+
+    // ---- 3. Поиск элемента по GUID ----
+    const Int32 nElements = model.GetElementCount ();
+    ModelerAPI::Element element;
+    bool found = false;
+    for (Int32 iElem = 1; iElem <= nElements; ++iElem) {
+        model.GetElement (iElem, &element);
+        if (element.GetElemGuid () == elemHead.guid) {
+            found = true;
+            break;
+        }
+    }
+    if (!found) {
+        errOut = "element not found in current 3D model (hidden layer? not in view?)";
+        return false;
+    }
+
+    const Int32 nBodies = element.GetTessellatedBodyCount ();
+    if (nBodies < 1) {
+        errOut = "element has no tessellated body (not a 3D element?)";
+        return false;
+    }
+
+    // ---- 4. Обход mesh ----
+    // Дедупликация вершин: одна и та же вершина встречается в нескольких
+    // полигонах. Без remap получим дубликаты и кривые нормали.
+    // Ключ: (bodyIdx << 32) | localVertexIndex (1-based в body).
+    std::unordered_map<uint64_t, uint32_t> vertexRemap;
+
+    ModelerAPI::MeshBody body;
+    ModelerAPI::Polygon polygon;
+    ModelerAPI::ConvexPolygon convexPolygon;
+    ModelerAPI::Vertex vertex;
+
+    auto getOrAddVertex = [&](uint32_t bodyIdx, int32_t localIdx, ModelerAPI::MeshBody& b) -> uint32_t {
+        const uint64_t key = (static_cast<uint64_t> (bodyIdx) << 32) |
+                             static_cast<uint32_t> (localIdx);
+        auto it = vertexRemap.find (key);
+        if (it != vertexRemap.end ()) return it->second;
+        b.GetVertex (localIdx, &vertex);
+        const uint32_t newIdx = static_cast<uint32_t> (outVertices.size () / 3);
+        outVertices.push_back (static_cast<float> (vertex.x));
+        outVertices.push_back (static_cast<float> (vertex.y));
+        outVertices.push_back (static_cast<float> (vertex.z));
+        vertexRemap[key] = newIdx;
+        return newIdx;
+    };
+
+    std::vector<uint32_t> polyIndices;
+    for (Int32 iBody = 1; iBody <= nBodies; ++iBody) {
+        element.GetTessellatedBody (iBody, &body);
+        const Int32 nPoly = body.GetPolygonCount ();
+        for (Int32 iPgon = 1; iPgon <= nPoly; ++iPgon) {
+            body.GetPolygon (iPgon, &polygon);
+            const Int32 nCvx = polygon.GetConvexPolygonCount ();
+            for (Int32 iCvx = 1; iCvx <= nCvx; ++iCvx) {
+                polygon.GetConvexPolygon (iCvx, &convexPolygon);
+                const Int32 nPedge = convexPolygon.GetVertexCount ();
+                if (nPedge < 3) continue;
+                polyIndices.clear ();
+                polyIndices.reserve (static_cast<size_t> (nPedge));
+                for (Int32 iPedge = 1; iPedge <= nPedge; ++iPedge) {
+                    const int32_t origIdx = convexPolygon.GetVertexIndex (iPedge);
+                    polyIndices.push_back (
+                        getOrAddVertex (static_cast<uint32_t> (iBody), origIdx, body));
+                }
+                // Fan-триангуляция: (v0, vi, vi+1) для i=1..n-2.
+                for (size_t i = 1; i + 1 < polyIndices.size (); ++i) {
+                    outTriangles.push_back (polyIndices[0]);
+                    outTriangles.push_back (polyIndices[i]);
+                    outTriangles.push_back (polyIndices[i + 1]);
+                }
+            }
+        }
+    }
+
+    if (outVertices.empty ()) {
+        errOut = "empty mesh (no vertices collected)";
+        return false;
+    }
+    return true;
 }
 
 // Плоский массив float32/uint32 -> байтовый вектор little-endian.
