@@ -2118,7 +2118,7 @@ GS::ObjectState BulkCloneElementCommand::Execute (
     // v1: только Object.
     const API_ElemTypeID srcType = GetElemTypeId (srcElem.header);
     if (srcType != API_ObjectID) {
-        return CreateErrorResponse (APIERR_NOTSUPP,
+        return CreateErrorResponse (APIERR_GENERAL,
             "BulkCloneElement v1 supports only Object (source is not an Object)");
     }
 
