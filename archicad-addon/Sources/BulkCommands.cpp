@@ -2144,7 +2144,7 @@ GS::ObjectState BulkCloneElementCommand::Execute (
             el.header.modiStamp = 0;
             el.header.groupGuid = APINULLGuid;
 
-            if (inst.contains ("story_index"))   el.header.floorInd = inst["story_index"].get<int> ();
+            if (inst.contains ("story_index"))   el.header.floorInd = static_cast<short> (inst["story_index"].get<int> ());
             if (inst.contains ("layer_index"))
                 el.header.layer = ACAPI_CreateAttributeIndex (inst["layer_index"].get<Int32> ());
 
