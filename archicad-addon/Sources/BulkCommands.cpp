@@ -983,9 +983,7 @@ GS::ObjectState BulkFindReplaceTextCommand::Execute (
     std::vector<Match> matches;
     size_t scannedCount = 0, matchedCount = 0, replacedCount = 0;
 
-    // Undo-барьер один на всю операцию. Даже если все элементы — разные,
-    // пользователь откатит замену одной Ctrl+Z.
-    ACAPI_CallUndoableCommand ("BulkFindReplaceText", [&]() {
+    auto doWork = [&]() {
         for (const API_Guid& guid : targets) {
             API_Element element = {};
             element.header.guid = guid;
@@ -1032,7 +1030,16 @@ GS::ObjectState BulkFindReplaceTextCommand::Execute (
                 ++replacedCount;
             }
         }
-    });
+    };
+
+    // Undo-барьер только для РЕАЛЬНОЙ мутации. При dry_run модель не
+    // меняется — пустая undo-запись в стеке пользователя была бы шумом
+    // (Ctrl+Z → «ничего не произошло»).
+    if (dryRun) {
+        doWork ();
+    } else {
+        ACAPI_CallUndoableCommand ("BulkFindReplaceText", doWork);
+    }
 
     msgpack::sbuffer outBuf;
     msgpack::packer<msgpack::sbuffer> pk (&outBuf);
