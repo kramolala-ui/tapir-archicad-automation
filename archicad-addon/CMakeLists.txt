@@ -54,43 +54,26 @@ FetchContent_Declare (
 FetchContent_MakeAvailable (zstd)
 
 # =============================================================================
-#  msgpack-cxx (header-only, C++17)
+#  nlohmann/json (header-only, C++17)
 # =============================================================================
-# Для шага 3 bulk-транспорта: msgpack-cxx — header-only, линковать нечего,
-# только include-путь. FetchContent со SOURCE_SUBDIR в корне, потому что
-# у msgpack-cxx CMakeLists.txt в корне репозитория (не как у zstd).
-
-# Используем GIT_REPOSITORY+GIT_TAG, а не URL+URL_HASH: релизные tarball'ы
-# msgpack-cxx пересобираются (SHA256 меняется между прогонами), git-тег
-# стабилен. GIT_SHALLOW — тянем только коммит тега, без истории.
+# API для сборки/парсинга JSON-структур, которые затем кодируются в msgpack
+# через json::to_msgpack / json::from_msgpack. Формат на проводе остаётся
+# msgpack — Python-клиент не меняется. Зато C++-код становится читаемым,
+# и уходит C2766.
 #
-# SOURCE_SUBDIR=include — критично: у msgpack-cxx корневой CMakeLists.txt
-# требует Boost (FIND_PACKAGE(Boost)). Он нам НЕ нужен — библиотека
-# header-only, мы берём только include-пути. Указывая SOURCE_SUBDIR
-# на папку без CMakeLists.txt, заставляем FetchContent_MakeAvailable
-# только скачать исходник, не вызывая add_subdirectory.
-FetchContent_Declare (
-    msgpack_cxx
-    GIT_REPOSITORY https://github.com/msgpack/msgpack-c.git
-    GIT_TAG        cpp-6.1.1
+# Почему не msgpack-cxx напрямую: на MSVC wchar_t ≡ unsigned short,
+# msgpack-cxx делает дублирующие explicit-специализации
+# convert/pack/object<wchar_t> и <unsigned short> → C2766 при сборке.
+# У msgpack-cxx НЕТ макроса это отключить (проверено). nlohmann/json
+# работает через std::string — проблемы нет.
+FetchContent_Declare (nlohmann_json
+    GIT_REPOSITORY https://github.com/nlohmann/json.git
+    GIT_TAG        v3.11.3
     GIT_SHALLOW    TRUE
-    SOURCE_SUBDIR  include
 )
-FetchContent_MakeAvailable (msgpack_cxx)
+FetchContent_MakeAvailable (nlohmann_json)
 
-target_include_directories (AddOn SYSTEM PRIVATE
-    ${msgpack_cxx_SOURCE_DIR}/include)
-
-# КРИТИЧНО: без MSGPACK_NO_BOOST msgpack/sysdep.hpp идёт в #else-ветку
-# и включает <boost/predef/other/endian.h>. С макросом берётся
-# вендоренный <msgpack/predef/other/endian.h> из самого репозитория —
-# Boost нам не нужен. См. include/msgpack/sysdep.hpp, блок
-# "#if defined(MSGPACK_NO_BOOST)".
-target_compile_definitions (AddOn PRIVATE
-    MSGPACK_NO_BOOST
-    MSGPACK_NO_WCHAR_T)   # MSVC: wchar_t ≡ unsigned short; без этого
-                           # msgpack делает дублирующие explicit-специализации
-                           # convert/pack/object<wchar_t> → C2766
+target_link_libraries (AddOn nlohmann_json::nlohmann_json)
 
 # Имя static-таргета в zstd менялось между версиями. Пробуем
 # несколько вариантов; если ни один не найден — печатаем список
