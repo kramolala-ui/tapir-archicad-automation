@@ -1365,6 +1365,10 @@ GSErrCode Initialize (void)
             bulkCommands, "0.1.0",
             "(experimental) Bulk-clone one donor element into N instances. Input: {source_guid, instances: [{pos_x, pos_y, level?, angle?, story_index?, layer_index?, params_override?}], delete_source?}. Output: {created_guids, errors}. v1: only API_ObjectID."
         );
+        err |= RegisterCommand<BulkMoveElementsCommand> (
+            bulkCommands, "0.1.0",
+            "Bulk-move elements by delta vector in one Execute. Input payload: {moves: [{source_guid, dx, dy, dz, copy?: bool=false}]}. Output payload: {per_source: [{source_guid, moved, error}], moved_count, errors_count}. One undo barrier for the whole batch."
+        );
         AddCommandGroup (bulkCommands);
     }
 
