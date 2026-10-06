@@ -3282,9 +3282,10 @@ GS::ObjectState BulkSetElementDataCommand::Execute (
             }
 
             if (dryRun) {
-                if (hasElementChanges)        ++appliedCount;
-                if (!gdlChanges.empty ())     ++appliedCount;
-                if (!classChanges.empty ())   ++appliedCount;
+                if (hasElementChanges)         ++appliedCount;
+                if (!gdlChanges.empty ())      ++appliedCount;
+                if (!classChanges.empty ())    ++appliedCount;
+                if (!propChanges.empty ())     ++appliedCount;
                 out["per_source"].push_back (srcOut);
                 continue;
             }
