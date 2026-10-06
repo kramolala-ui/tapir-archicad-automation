@@ -1355,7 +1355,11 @@ GSErrCode Initialize (void)
         );
         err |= RegisterCommand<BulkGetElementDataCommand> (
             bulkCommands, "0.2.0",
-            "(experimental) Complex read of element data -> Entity dict + relations. Input payload: {elements: [guids], properties?: [prop-guid], gdl_names?: [name]|'all', classifications?: [system-guid]|'all', connected_types?: ['Door','Window',...], with_bbox?: bool=true, with_mesh?: bool=false, apply_transform?: bool=true}. Output payload: {entities: [{guid, element_type, parameters: {story_index, layer_index, bbox_*, <prop-guid>: value, GDL/<name>: value, class/<system-guid>: <item-guid>}, mesh?: {vertexCount, triangleCount, vertices: binary, triangles: binary}, metadata: {source, aspects_loaded}}], relations: [{from_guid, to_guid, kind: 'connected_to', via: '<elem-type>'}]}."
+            "(experimental) Complex read of element data -> Entity dict + relations. Input payload: {elements: [guids], selected?: bool=false, properties?: [prop-guid], gdl_names?: [name]|'all', classifications?: [system-guid]|'all', connected_types?: ['Door','Window',...], with_bbox?: bool=true, with_mesh?: bool=false, with_group_info?: bool=true, with_group_members?: bool=false, apply_transform?: bool=true}. selected=true — читать текущее выделение Archicad вместо 'elements'. Output payload: {entities: [{guid, element_type, parameters: {story_index, layer_index, group_guid?, bbox_*, <prop-guid>: value, GDL/<name>: value, class/<system-guid>: <item-guid>}, mesh?: {vertexCount, triangleCount, vertices: binary, triangles: binary}, metadata: {source, aspects_loaded}}], relations: [{from_guid, to_guid, kind: 'connected_to', via: '<elem-type>'}]}."
+        );
+        err |= RegisterCommand<BulkGetGroupMembersCommand> (
+            bulkCommands, "0.1.0",
+            "Expand native Archicad element groups (Ctrl+G). Input payload: {element_guids?: [guids], group_guids?: [guids], recursive?: bool=true}. For each element_guid — find parent group via ACAPI_ElementGroup_GetGroup; for each group_guid — list members via ACAPI_ElementGroup_GetAllGroupedElems (recursive) or GetGroupedElems (direct). Output payload: {groups: [{source_guid, source_kind: 'element'|'group', group_guid|null, member_guids: [guids]}]}."
         );
         AddCommandGroup (bulkCommands);
     }
