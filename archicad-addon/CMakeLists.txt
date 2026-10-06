@@ -86,7 +86,11 @@ target_include_directories (AddOn SYSTEM PRIVATE
 # вендоренный <msgpack/predef/other/endian.h> из самого репозитория —
 # Boost нам не нужен. См. include/msgpack/sysdep.hpp, блок
 # "#if defined(MSGPACK_NO_BOOST)".
-target_compile_definitions (AddOn PRIVATE MSGPACK_NO_BOOST)
+target_compile_definitions (AddOn PRIVATE
+    MSGPACK_NO_BOOST
+    MSGPACK_NO_WCHAR_T)   # MSVC: wchar_t ≡ unsigned short; без этого
+                           # msgpack делает дублирующие explicit-специализации
+                           # convert/pack/object<wchar_t> → C2766
 
 # Имя static-таргета в zstd менялось между версиями. Пробуем
 # несколько вариантов; если ни один не найден — печатаем список
