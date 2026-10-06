@@ -2582,10 +2582,12 @@ GS::Optional<GS::UniString> BulkGetGroupMembersCommand::GetRawResponseSchema () 
     return R"({
         "type": "object",
         "properties": {
-            "payload_b64":   { "type": "string"  },
-            "compression":   { "type": "string"  },
-            "elements_count":{ "type": "integer" },
-            "groups_count":  { "type": "integer" }
+            "payload_b64":    { "type": "string"  },
+            "compression":    { "type": "string"  },
+            "elements_count": { "type": "integer" },
+            "groups_count":   { "type": "integer" },
+            "entities_count": { "type": "integer" },
+            "relations_count":{ "type": "integer" }
         },
         "additionalProperties": false,
         "required": [ "payload_b64", "compression" ]
