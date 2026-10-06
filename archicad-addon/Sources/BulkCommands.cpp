@@ -1393,18 +1393,33 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
     Modeler::SightPtr sight = *sightPtrPtr;
 
     // ---- 2. AttributeReader + EXPGetModel ----
+    // ACAPI_Attribute_GetCurrentAttributeSetReader появилась в AC26.
+    // В AC25 её нет (error C3861 при компиляции). Reader нужен ModelerAPI
+    // для материалов и текстур, а не для геометрии — на AC25 передаём
+    // nullptr. Если это окажется проблемой (крэш или пустой mesh на AC25),
+    // вернёмся и найдём альтернативу (напр. ACAPI_Attribute_GetAttributeSetReader).
+#if defined (ServerMainVers_2600) || defined (ServerMainVers_2700) || \
+    defined (ServerMainVers_2800) || defined (ServerMainVers_2900) || \
+    defined (ServerMainVers_3000)
     GS::Owner<Modeler::IAttributeReader> attrReader (
         ACAPI_Attribute_GetCurrentAttributeSetReader ());
     if (attrReader == nullptr) {
         errOut = "failed to get IAttributeReader";
         return false;
     }
-
     ModelerAPI::Model model;
     if (EXPGetModel (sight, &model, attrReader.Get ()) != NoError) {
         errOut = "EXPGetModel failed";
         return false;
     }
+#else
+    // AC25 и старше — без reader.
+    ModelerAPI::Model model;
+    if (EXPGetModel (sight, &model, nullptr) != NoError) {
+        errOut = "EXPGetModel failed (AC25 path, no IAttributeReader)";
+        return false;
+    }
+#endif
 
     // ---- 3. Поиск элемента по GUID ----
     const Int32 nElements = model.GetElementCount ();
