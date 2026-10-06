@@ -2151,97 +2151,109 @@ GS::ObjectState BulkCloneElementCommand::Execute (
         return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
     }
 
-    // Читаем донора.
-    API_Guid srcGuid = APIGuidFromString (sourceGuidStr.c_str ());
-    if (srcGuid == APINULLGuid) {
-        return CreateErrorResponse (APIERR_BADPARS, "source_guid is invalid");
-    }
-    API_Element srcElem = {};
-    srcElem.header.guid = srcGuid;
-    if (ACAPI_Element_Get (&srcElem) != NoError) {
-        return CreateErrorResponse (APIERR_GENERAL, "source element not found");
-    }
-
-    // v1: только Object.
-    const API_ElemTypeID srcType = GetElemTypeId (srcElem.header);
-    if (srcType != API_ObjectID) {
-        return CreateErrorResponse (APIERR_GENERAL,
-            "BulkCloneElement v1 supports only Object (source is not an Object)");
-    }
-
-    // Получаем полный memo донора (GDL + прочее). Держим на время всей операции.
-    API_ElementMemo srcMemo = {};
-    constexpr UInt64 kAllMemoMask =
-        APIMemoMask_All;
-    if (ACAPI_Element_GetMemo (srcGuid, &srcMemo, kAllMemoMask) != NoError) {
-        return CreateErrorResponse (APIERR_GENERAL, "failed to get source memo");
-    }
-    const GS::OnExit srcMemoGuard ([&srcMemo] () { ACAPI_DisposeElemMemoHdls (&srcMemo); });
-
     nlohmann::ordered_json out;
+    out["per_source"]    = nlohmann::json::array ();
     out["created_guids"] = nlohmann::json::array ();
-    out["errors"] = nlohmann::json::array ();
+    out["errors"]        = nlohmann::json::array ();
 
-    // Один undo на весь батч.
+    // Один undo на ВСЕ доноры и все их копии сразу.
     ACAPI_CallUndoableCommand ("BulkCloneElement", [&] () -> GSErrCode {
-        for (size_t i = 0; i < instances.size (); ++i) {
-            const auto& inst = instances[i];
-            API_Element el = srcElem;             // структурная копия шапки + object-полей
-            el.header.guid = APINULLGuid;
-            el.header.modiStamp = 0;
-            el.header.groupGuid = APINULLGuid;
+        constexpr UInt64 kAllMemoMask = APIMemoMask_All;
+        for (const SourceTask& task : sources) {
+            nlohmann::ordered_json srcOut;
+            srcOut["source_guid"]   = task.sourceGuid;
+            srcOut["created_guids"] = nlohmann::json::array ();
+            srcOut["errors"]        = nlohmann::json::array ();
 
-            if (inst.contains ("story_index"))   el.header.floorInd = static_cast<short> (inst["story_index"].get<int> ());
-            if (inst.contains ("layer_index"))
-                el.header.layer = ACAPI_CreateAttributeIndex (inst["layer_index"].get<Int32> ());
-
-            if (inst.contains ("pos_x"))  el.object.pos.x = inst["pos_x"].get<double> ();
-            if (inst.contains ("pos_y"))  el.object.pos.y = inst["pos_y"].get<double> ();
-            if (inst.contains ("level"))  el.object.level = inst["level"].get<double> ();
-            if (inst.contains ("angle"))  el.object.angle = inst["angle"].get<double> ();
-
-            // Готовим memo: заново берём от донора (у каждого — свои handle'ы),
-            // затем применяем GDL-overrides.
-            API_ElementMemo memo = {};
-            if (ACAPI_Element_GetMemo (srcGuid, &memo, kAllMemoMask) != NoError) {
-                nlohmann::ordered_json e;
-                e["index"] = static_cast<int64_t> (i);
-                e["msg"] = "failed to get memo from source";
-                out["errors"].push_back (e);
-                ACAPI_DisposeElemMemoHdls (&memo);
+            API_Guid srcGuid = APIGuidFromString (task.sourceGuid.c_str ());
+            if (srcGuid == APINULLGuid) {
+                nlohmann::ordered_json e; e["msg"] = "source_guid is invalid";
+                srcOut["errors"].push_back (e);
+                out["per_source"].push_back (srcOut);
+                continue;
+            }
+            API_Element srcElem = {};
+            srcElem.header.guid = srcGuid;
+            if (ACAPI_Element_Get (&srcElem) != NoError) {
+                nlohmann::ordered_json e; e["msg"] = "source element not found";
+                srcOut["errors"].push_back (e);
+                out["per_source"].push_back (srcOut);
+                continue;
+            }
+            const API_ElemTypeID srcType = GetElemTypeId (srcElem.header);
+            if (srcType != API_ObjectID) {
+                nlohmann::ordered_json e; e["msg"] = "BulkCloneElement supports only Object (source is not an Object)";
+                srcOut["errors"].push_back (e);
+                out["per_source"].push_back (srcOut);
                 continue;
             }
 
-            if (inst.contains ("params_override") && memo.params != nullptr) {
-                const auto& ovr = inst["params_override"];
-                const GSSize nParams = BMGetHandleSize ((GSHandle) memo.params) / sizeof (API_AddParType);
-                for (GSIndex k = 0; k < nParams; ++k) {
-                    API_AddParType& p = (*memo.params)[k];
-                    const std::string pname (p.name);
-                    if (ovr.contains (pname)) {
-                        ApplyGdlOverride (p, ovr[pname]);
+            for (size_t i = 0; i < task.instances.size (); ++i) {
+                const auto& inst = task.instances[i];
+                API_Element el = srcElem;
+                el.header.guid = APINULLGuid;
+                el.header.modiStamp = 0;
+                el.header.groupGuid = APINULLGuid;
+
+                if (inst.contains ("story_index"))   el.header.floorInd = static_cast<short> (inst["story_index"].get<int> ());
+                if (inst.contains ("layer_index"))
+                    el.header.layer = ACAPI_CreateAttributeIndex (inst["layer_index"].get<Int32> ());
+                if (inst.contains ("pos_x"))  el.object.pos.x = inst["pos_x"].get<double> ();
+                if (inst.contains ("pos_y"))  el.object.pos.y = inst["pos_y"].get<double> ();
+                if (inst.contains ("level"))  el.object.level = inst["level"].get<double> ();
+                if (inst.contains ("angle"))  el.object.angle = inst["angle"].get<double> ();
+
+                API_ElementMemo memo = {};
+                if (ACAPI_Element_GetMemo (srcGuid, &memo, kAllMemoMask) != NoError) {
+                    nlohmann::ordered_json e;
+                    e["index"] = static_cast<int64_t> (i);
+                    e["msg"] = "failed to get memo from source";
+                    srcOut["errors"].push_back (e);
+                    out["errors"].push_back (e);
+                    ACAPI_DisposeElemMemoHdls (&memo);
+                    continue;
+                }
+
+                if (inst.contains ("params_override") && memo.params != nullptr) {
+                    const auto& ovr = inst["params_override"];
+                    const GSSize nParams = BMGetHandleSize ((GSHandle) memo.params) / sizeof (API_AddParType);
+                    for (GSIndex k = 0; k < nParams; ++k) {
+                        API_AddParType& p = (*memo.params)[k];
+                        const std::string pname (p.name);
+                        if (ovr.contains (pname)) {
+                            ApplyGdlOverride (p, ovr[pname]);
+                        }
                     }
                 }
+
+                GSErrCode createErr = ACAPI_Element_Create (&el, &memo);
+                if (createErr == NoError) {
+                    const std::string g = APIGuidToString (el.header.guid).ToCStr ().Get ();
+                    srcOut["created_guids"].push_back (g);
+                    out["created_guids"].push_back (g);
+                } else {
+                    nlohmann::ordered_json e;
+                    e["index"] = static_cast<int64_t> (i);
+                    e["msg"]   = "ACAPI_Element_Create failed";
+                    e["code"]  = static_cast<int64_t> (createErr);
+                    srcOut["errors"].push_back (e);
+                    out["errors"].push_back (e);
+                }
+                ACAPI_DisposeElemMemoHdls (&memo);
             }
 
-            GSErrCode createErr = ACAPI_Element_Create (&el, &memo);
-            if (createErr == NoError) {
-                out["created_guids"].push_back (
-                    APIGuidToString (el.header.guid).ToCStr ().Get ());
-            } else {
-                nlohmann::ordered_json e;
-                e["index"] = static_cast<int64_t> (i);
-                e["msg"]   = "ACAPI_Element_Create failed";
-                e["code"]  = static_cast<int64_t> (createErr);
-                out["errors"].push_back (e);
-            }
-            ACAPI_DisposeElemMemoHdls (&memo);
+            out["per_source"].push_back (srcOut);
         }
 
         if (deleteSource) {
             GS::Array<API_Guid> toDelete;
-            toDelete.Push (srcGuid);
-            ACAPI_Element_Delete (toDelete);
+            for (const SourceTask& t : sources) {
+                API_Guid g = APIGuidFromString (t.sourceGuid.c_str ());
+                if (g != APINULLGuid) toDelete.Push (g);
+            }
+            if (!toDelete.IsEmpty ()) {
+                ACAPI_Element_Delete (toDelete);
+            }
         }
         return NoError;
     });
