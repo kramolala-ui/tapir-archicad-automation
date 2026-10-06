@@ -2843,3 +2843,347 @@ GS::ObjectState BulkRotateElementsCommand::Execute (
     response.Add ("errors_count",  static_cast<Int64> (errorsCount));
     return response;
 }
+
+
+// ---------------------------------------------------------------------
+//  BulkSetElementDataCommand
+// ---------------------------------------------------------------------
+//
+// Универсальная запись полей в элементы (v0.1.0, итерация 3a).
+// Пишет: story_index, layer_index, pos_x/pos_y/level/angle (для Object/Lamp).
+// Принимает (но пока не пишет): GDL/*, Archicad/*, class/*, text — уходят в
+// ignored_not_implemented[] с явной причиной. bbox_* — в ignored_readonly[].
+// Один undo-барьер на весь батч, поддержка dry_run.
+//
+// Вход (msgpack в payload_b64):
+//   {
+//     "entities": [
+//       { "guid": "guid",
+//         "parameters": {
+//           "story_index": 0,           // int
+//           "layer_index": 853,          // int
+//           "object_pos_x": 100.0,       // double (алиас: pos_x)
+//           "object_pos_y": 200.0,       // double (алиас: pos_y)
+//           "object_level": 0.0,         // double (алиас: level)
+//           "object_angle": 1.5708,      // double (алиас: angle)
+//           "GDL/A": 2.0,                // not_implemented (3b)
+//           "Archicad/...": "...",       // not_implemented (3c)
+//           "class/<system>": "<item>",  // not_implemented (3d)
+//           "bbox_size_x": 1.0,          // read-only — ignored
+//           "text": "..."                // not_implemented (3d) — использовать BulkSetTexts
+//         } }
+//     ],
+//     "dry_run": false
+//   }
+//
+// Выход (msgpack в payload_b64):
+//   {
+//     "per_source": [
+//       { "guid": "...",
+//         "applied": ["story_index", "object_pos_x"],
+//         "ignored_readonly": ["bbox_size_x"],
+//         "ignored_not_implemented": ["GDL/A", "text"],
+//         "ignored_unknown": ["foo"],
+//         "errors": [ {"key": "...", "msg": "...", "code": -N} ] }
+//     ],
+//     "applied_count": N,
+//     "errors_count":  M,
+//     "dry_run": bool
+//   }
+
+namespace {
+
+enum class SetKeyKind {
+    Story,
+    Layer,
+    PosX,
+    PosY,
+    Level,
+    Angle,
+    Text,
+    Gdl,
+    Archicad,
+    Class,
+    ReadOnly,
+    Unknown
+};
+
+bool StartsWith (const std::string& s, const char* prefix) {
+    const size_t n = std::strlen (prefix);
+    return s.size () >= n && s.compare (0, n, prefix) == 0;
+}
+
+SetKeyKind DetectSetKeyKind (const std::string& key)
+{
+    if (key == "story_index") return SetKeyKind::Story;
+    if (key == "layer_index") return SetKeyKind::Layer;
+    if (key == "object_pos_x" || key == "pos_x") return SetKeyKind::PosX;
+    if (key == "object_pos_y" || key == "pos_y") return SetKeyKind::PosY;
+    if (key == "object_level" || key == "level")  return SetKeyKind::Level;
+    if (key == "object_angle" || key == "angle")  return SetKeyKind::Angle;
+    if (key == "text") return SetKeyKind::Text;
+    if (StartsWith (key, "GDL/")) return SetKeyKind::Gdl;
+    if (StartsWith (key, "Archicad/")) return SetKeyKind::Archicad;
+    if (StartsWith (key, "class/")) return SetKeyKind::Class;
+    if (StartsWith (key, "bbox_")) return SetKeyKind::ReadOnly;
+    return SetKeyKind::Unknown;
+}
+
+bool IsObjectLike (const API_Element& element)
+{
+    const API_ElemTypeID t = GetElemTypeId (element.header);
+    return t == API_ObjectID || t == API_LampID;
+}
+
+}  // namespace
+
+BulkSetElementDataCommand::BulkSetElementDataCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkSetElementDataCommand::GetName () const
+{
+    return "BulkSetElementData";
+}
+
+GS::Optional<GS::UniString> BulkSetElementDataCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkSetElementDataCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64":   { "type": "string" },
+            "compression":   { "type": "string" },
+            "applied_count": { "type": "integer" },
+            "errors_count":  { "type": "integer" },
+            "dry_run":       { "type": "boolean" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkSetElementDataCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    struct EntityTask {
+        std::string guid;
+        nlohmann::ordered_json parameters;
+    };
+    std::vector<EntityTask> entities;
+    bool dryRun = false;
+
+    try {
+        nlohmann::json j = nlohmann::json::from_msgpack (raw);
+        if (!j.contains ("entities") || !j["entities"].is_array ()) {
+            return CreateErrorResponse (APIERR_BADPARS,
+                "payload must contain 'entities' array");
+        }
+        for (const auto& item : j["entities"]) {
+            if (!item.contains ("guid")) continue;
+            EntityTask t;
+            t.guid = item["guid"].get<std::string> ();
+            if (item.contains ("parameters") && item["parameters"].is_object ()) {
+                t.parameters = item["parameters"];
+            } else {
+                t.parameters = nlohmann::ordered_json::object ();
+            }
+            entities.push_back (t);
+        }
+        if (j.contains ("dry_run")) dryRun = j["dry_run"].get<bool> ();
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+
+    nlohmann::ordered_json out;
+    out["per_source"]    = nlohmann::json::array ();
+    out["applied_count"] = 0;
+    out["errors_count"]  = 0;
+    out["dry_run"]       = dryRun;
+
+    size_t appliedCount = 0;
+    size_t errorsCount  = 0;
+
+    auto doWork = [&] () {
+        for (const EntityTask& task : entities) {
+            nlohmann::ordered_json srcOut;
+            srcOut["guid"]                    = task.guid;
+            srcOut["applied"]                 = nlohmann::json::array ();
+            srcOut["ignored_readonly"]        = nlohmann::json::array ();
+            srcOut["ignored_not_implemented"] = nlohmann::json::array ();
+            srcOut["ignored_unknown"]         = nlohmann::json::array ();
+            srcOut["errors"]                  = nlohmann::json::array ();
+
+            API_Guid guid = APIGuidFromString (task.guid.c_str ());
+            if (guid == APINULLGuid) {
+                nlohmann::ordered_json e;
+                e["msg"] = "guid is invalid";
+                srcOut["errors"].push_back (e);
+                out["per_source"].push_back (srcOut);
+                ++errorsCount;
+                continue;
+            }
+
+            API_Element element = {};
+            element.header.guid = guid;
+            if (ACAPI_Element_Get (&element) != NoError) {
+                nlohmann::ordered_json e;
+                e["msg"] = "element not found";
+                srcOut["errors"].push_back (e);
+                out["per_source"].push_back (srcOut);
+                ++errorsCount;
+                continue;
+            }
+
+            API_Element mask = {};
+            ACAPI_ELEMENT_MASK_CLEAR (mask);
+            bool hasElementChanges = false;
+
+            for (auto it = task.parameters.begin (); it != task.parameters.end (); ++it) {
+                const std::string key = it.key ();
+                const auto& val = it.value ();
+
+                switch (DetectSetKeyKind (key)) {
+                    case SetKeyKind::Story: {
+                        if (!val.is_number_integer ()) {
+                            nlohmann::ordered_json e; e["key"] = key; e["msg"] = "expected integer";
+                            srcOut["errors"].push_back (e); ++errorsCount; break;
+                        }
+                        element.header.floorInd = static_cast<short> (val.get<int> ());
+                        ACAPI_ELEMENT_MASK_SET (mask, API_Elem_Head, floorInd);
+                        hasElementChanges = true;
+                        srcOut["applied"].push_back (key);
+                    } break;
+                    case SetKeyKind::Layer: {
+                        if (!val.is_number_integer ()) {
+                            nlohmann::ordered_json e; e["key"] = key; e["msg"] = "expected integer";
+                            srcOut["errors"].push_back (e); ++errorsCount; break;
+                        }
+                        element.header.layer = ACAPI_CreateAttributeIndex (val.get<Int32> ());
+                        ACAPI_ELEMENT_MASK_SET (mask, API_Elem_Head, layer);
+                        hasElementChanges = true;
+                        srcOut["applied"].push_back (key);
+                    } break;
+                    case SetKeyKind::PosX:
+                    case SetKeyKind::PosY:
+                    case SetKeyKind::Level:
+                    case SetKeyKind::Angle: {
+                        if (!IsObjectLike (element)) {
+                            srcOut["ignored_unknown"].push_back (key);
+                            break;
+                        }
+                        if (!val.is_number ()) {
+                            nlohmann::ordered_json e; e["key"] = key; e["msg"] = "expected number";
+                            srcOut["errors"].push_back (e); ++errorsCount; break;
+                        }
+                        const double d = val.get<double> ();
+                        const SetKeyKind kind = DetectSetKeyKind (key);
+                        if (kind == SetKeyKind::PosX) {
+                            element.object.pos.x = d;
+                            ACAPI_ELEMENT_MASK_SET (mask, API_ObjectType, pos.x);
+                        } else if (kind == SetKeyKind::PosY) {
+                            element.object.pos.y = d;
+                            ACAPI_ELEMENT_MASK_SET (mask, API_ObjectType, pos.y);
+                        } else if (kind == SetKeyKind::Level) {
+                            element.object.level = d;
+                            ACAPI_ELEMENT_MASK_SET (mask, API_ObjectType, level);
+                        } else {
+                            element.object.angle = d;
+                            ACAPI_ELEMENT_MASK_SET (mask, API_ObjectType, angle);
+                        }
+                        hasElementChanges = true;
+                        srcOut["applied"].push_back (key);
+                    } break;
+                    case SetKeyKind::Text:
+                        srcOut["ignored_not_implemented"].push_back (key);
+                        break;
+                    case SetKeyKind::Gdl:
+                    case SetKeyKind::Archicad:
+                    case SetKeyKind::Class:
+                        srcOut["ignored_not_implemented"].push_back (key);
+                        break;
+                    case SetKeyKind::ReadOnly:
+                        srcOut["ignored_readonly"].push_back (key);
+                        break;
+                    case SetKeyKind::Unknown:
+                    default:
+                        srcOut["ignored_unknown"].push_back (key);
+                        break;
+                }
+            }
+
+            if (hasElementChanges) {
+                if (dryRun) {
+                    ++appliedCount;
+                } else {
+                    const GSErrCode e = ACAPI_Element_Change (&element, &mask, nullptr, 0, true);
+                    if (e == NoError) {
+                        ++appliedCount;
+                    } else {
+                        nlohmann::ordered_json err2;
+                        err2["msg"]  = "ACAPI_Element_Change failed";
+                        err2["code"] = static_cast<int64_t> (e);
+                        srcOut["errors"].push_back (err2);
+                        ++errorsCount;
+                    }
+                }
+            }
+
+            out["per_source"].push_back (srcOut);
+        }
+    };
+
+    if (dryRun) {
+        doWork ();
+    } else {
+        ACAPI_CallUndoableCommand ("BulkSetElementData", [&] () -> GSErrCode {
+            doWork ();
+            return NoError;
+        });
+    }
+
+    out["applied_count"] = static_cast<uint64_t> (appliedCount);
+    out["errors_count"]  = static_cast<uint64_t> (errorsCount);
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 =
+        EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64",   GS::UniString (outB64.c_str ()));
+    response.Add ("compression",   GS::UniString (outCompression.c_str ()));
+    response.Add ("applied_count", static_cast<Int64> (appliedCount));
+    response.Add ("errors_count",  static_cast<Int64> (errorsCount));
+    response.Add ("dry_run",       dryRun);
+    return response;
+}
