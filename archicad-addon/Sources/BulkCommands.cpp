@@ -1108,7 +1108,9 @@ GS::ObjectState BulkGetElementDataCommand::Execute (
 
         auto& params = entity["parameters"];
         params["story_index"] = static_cast<int64_t> (element.header.floorInd);
-        params["layer_index"] = static_cast<int64_t> (element.header.layer);
+        // API_AttributeIndex — typedef Int32 в AC25/26, но класс в AC27+;
+        // GetAttributeIndex (MigrationHelper.hpp) даёт int в обоих случаях.
+        params["layer_index"] = static_cast<int64_t> (GetAttributeIndex (element.header.layer));
         entity["metadata"]["aspects_loaded"].push_back ("details");
 
         // ---- bbox ----
