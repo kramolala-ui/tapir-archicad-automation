@@ -3236,20 +3236,50 @@ GS::ObjectState BulkSetElementDataCommand::Execute (
                 }
             }
 
+            if (dryRun) {
+                if (hasElementChanges)        ++appliedCount;
+                if (!gdlChanges.empty ())     ++appliedCount;
+                if (!classChanges.empty ())   ++appliedCount;
+                out["per_source"].push_back (srcOut);
+                continue;
+            }
+
+            // 1. Element fields (story/layer/pos/level/angle)
             if (hasElementChanges) {
-                if (dryRun) {
-                    ++appliedCount;
-                } else {
-                    const GSErrCode e = ACAPI_Element_Change (&element, &mask, nullptr, 0, true);
-                    if (e == NoError) {
-                        ++appliedCount;
-                    } else {
-                        nlohmann::ordered_json err2;
-                        err2["msg"]  = "ACAPI_Element_Change failed";
-                        err2["code"] = static_cast<int64_t> (e);
-                        srcOut["errors"].push_back (err2);
-                        ++errorsCount;
-                    }
+                const GSErrCode e = ACAPI_Element_Change (&element, &mask, nullptr, 0, true);
+                if (e == NoError) ++appliedCount;
+                else {
+                    nlohmann::ordered_json err2;
+                    err2["msg"]  = "ACAPI_Element_Change(element) failed";
+                    err2["code"] = static_cast<int64_t> (e);
+                    srcOut["errors"].push_back (err2);
+                    ++errorsCount;
+                }
+            }
+
+            // 2. GDL parameters
+            if (!gdlChanges.empty ()) {
+                const GSErrCode e = ApplyGdlBatch (element, gdlChanges);
+                if (e == NoError) ++appliedCount;
+                else {
+                    nlohmann::ordered_json err2;
+                    err2["msg"]  = "GDL batch failed";
+                    err2["code"] = static_cast<int64_t> (e);
+                    srcOut["errors"].push_back (err2);
+                    ++errorsCount;
+                }
+            }
+
+            // 3. Classifications (class/*)
+            if (!classChanges.empty ()) {
+                const GSErrCode e = ApplyClassBatch (guid, classChanges);
+                if (e == NoError) ++appliedCount;
+                else {
+                    nlohmann::ordered_json err2;
+                    err2["msg"]  = "Class batch failed";
+                    err2["code"] = static_cast<int64_t> (e);
+                    srcOut["errors"].push_back (err2);
+                    ++errorsCount;
                 }
             }
 
