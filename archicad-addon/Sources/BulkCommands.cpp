@@ -2384,20 +2384,44 @@ GS::ObjectState BulkGetGroupMembersCommand::Execute (
     nlohmann::ordered_json out;
     out["groups"] = nlohmann::json::array ();
 
+    // Дедупликация: одна запись на уникальную группу (group_guid).
+    // Если source-элементы без группы (groupGuid == APINULLGuid) — по-прежнему
+    // отдельная запись на каждый source (их нельзя «слить» по смыслу).
+    std::map<std::string, size_t> groupIndexByGuid;
+
     auto expandGroup = [&](const std::string& sourceGuid,
                            const char* sourceKind,
                            const API_Guid& groupGuid) {
-        nlohmann::ordered_json g;
-        g["source_guid"] = sourceGuid;
-        g["source_kind"] = sourceKind;
         if (groupGuid == APINULLGuid) {
+            nlohmann::ordered_json g;
+            g["source_guid"]  = sourceGuid;
+            g["source_kind"]  = sourceKind;
             g["group_guid"]   = nullptr;
             g["member_guids"] = nlohmann::json::array ();
             out["groups"].push_back (g);
             return;
         }
-        g["group_guid"] = APIGuidToString (groupGuid).ToCStr ().Get ();
+
+        const std::string groupGuidStr = APIGuidToString (groupGuid).ToCStr ().Get ();
+        auto it = groupIndexByGuid.find (groupGuidStr);
+        if (it != groupIndexByGuid.end ()) {
+            // Уже есть — добавляем source в source_guids/source_kinds этой записи.
+            auto& g = out["groups"][it->second];
+            g["source_guids"].push_back (sourceGuid);
+            g["source_kinds"].push_back (sourceKind);
+            return;
+        }
+
+        nlohmann::ordered_json g;
+        g["group_guid"]   = groupGuidStr;
         g["member_guids"] = nlohmann::json::array ();
+        g["source_guids"] = nlohmann::json::array ();
+        g["source_kinds"] = nlohmann::json::array ();
+        g["source_guids"].push_back (sourceGuid);
+        g["source_kinds"].push_back (sourceKind);
+        // Обратная совместимость: первый source_guid / source_kind.
+        g["source_guid"] = sourceGuid;
+        g["source_kind"] = sourceKind;
 
         GS::Array<API_Guid> members;
         GSErrCode e = recursive
@@ -2409,6 +2433,7 @@ GS::ObjectState BulkGetGroupMembersCommand::Execute (
             }
         }
         out["groups"].push_back (g);
+        groupIndexByGuid[groupGuidStr] = out["groups"].size () - 1;
     };
 
     // 1. element_guids: для каждого найти его группу, развернуть.
