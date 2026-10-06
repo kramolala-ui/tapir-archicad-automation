@@ -3396,3 +3396,156 @@ GS::ObjectState BulkSetElementDataCommand::Execute (
     response.Add ("dry_run",       dryRun);
     return response;
 }
+
+
+// ---------------------------------------------------------------------
+//  BulkDeleteElementsCommand
+// ---------------------------------------------------------------------
+//
+// Массовое удаление элементов одним Execute. Один undo на весь батч.
+//
+// Вход (msgpack в payload_b64):
+//   { "guids": ["guid", "guid", ...] }
+//
+// Выход (msgpack в payload_b64):
+//   {
+//     "per_source":   [ { "guid": "...", "deleted": true|false, "error": null|"<текст>" } ],
+//     "deleted_count": N,
+//     "errors_count":  M
+//   }
+
+BulkDeleteElementsCommand::BulkDeleteElementsCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkDeleteElementsCommand::GetName () const
+{
+    return "BulkDeleteElements";
+}
+
+GS::Optional<GS::UniString> BulkDeleteElementsCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkDeleteElementsCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64":   { "type": "string" },
+            "compression":   { "type": "string" },
+            "deleted_count": { "type": "integer" },
+            "errors_count":  { "type": "integer" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkDeleteElementsCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    std::vector<std::string> guids;
+    try {
+        nlohmann::json j = nlohmann::json::from_msgpack (raw);
+        if (!j.contains ("guids") || !j["guids"].is_array ()) {
+            return CreateErrorResponse (APIERR_BADPARS, "payload must contain 'guids' array");
+        }
+        for (const auto& item : j["guids"]) {
+            if (item.is_string ()) guids.push_back (item.get<std::string> ());
+        }
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+
+    nlohmann::ordered_json out;
+    out["per_source"]    = nlohmann::json::array ();
+    out["deleted_count"] = 0;
+    out["errors_count"]  = 0;
+
+    size_t deletedCount = 0;
+    size_t errorsCount  = 0;
+
+    ACAPI_CallUndoableCommand ("BulkDeleteElements", [&] () -> GSErrCode {
+        // Собираем валидные гуиды для одного массива; невалидные — в отчёт.
+        GS::Array<API_Guid> toDelete;
+        std::vector<std::string> validSources;
+        for (const std::string& g : guids) {
+            API_Guid guid = APIGuidFromString (g.c_str ());
+            if (guid == APINULLGuid) {
+                nlohmann::ordered_json srcOut;
+                srcOut["guid"]    = g;
+                srcOut["deleted"] = false;
+                srcOut["error"]   = "guid is invalid";
+                out["per_source"].push_back (srcOut);
+                ++errorsCount;
+                continue;
+            }
+            toDelete.Push (guid);
+            validSources.push_back (g);
+        }
+
+        GSErrCode delErr = NoError;
+        if (!toDelete.IsEmpty ()) {
+            delErr = ACAPI_Element_Delete (toDelete);
+        }
+
+        for (const std::string& g : validSources) {
+            nlohmann::ordered_json srcOut;
+            srcOut["guid"] = g;
+            if (delErr == NoError) {
+                srcOut["deleted"] = true;
+                srcOut["error"]   = nullptr;
+                ++deletedCount;
+            } else {
+                srcOut["deleted"] = false;
+                srcOut["error"]   = std::string ("delete failed (code=") +
+                    std::to_string (static_cast<long long> (delErr)) + ")";
+                ++errorsCount;
+            }
+            out["per_source"].push_back (srcOut);
+        }
+        return NoError;
+    });
+
+    out["deleted_count"] = static_cast<uint64_t> (deletedCount);
+    out["errors_count"]  = static_cast<uint64_t> (errorsCount);
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 =
+        EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64",   GS::UniString (outB64.c_str ()));
+    response.Add ("compression",   GS::UniString (outCompression.c_str ()));
+    response.Add ("deleted_count", static_cast<Int64> (deletedCount));
+    response.Add ("errors_count",  static_cast<Int64> (errorsCount));
+    return response;
+}
