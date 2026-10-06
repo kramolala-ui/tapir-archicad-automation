@@ -433,17 +433,13 @@ GS::ObjectState BulkGetPropertyValuesCommand::Execute (
     std::vector<std::string> elemGuids;
     std::vector<std::string> propGuids;
     try {
-        auto oh = msgpack::unpack (reinterpret_cast<const char*> (raw.data ()), raw.size ());
-        auto obj = oh.get ();
-        auto m = obj.as<std::map<std::string, msgpack::object>> ();
-        auto itEl = m.find ("elements");
-        auto itPr = m.find ("properties");
-        if (itEl == m.end () || itPr == m.end ()) {
+        nlohmann::json j = nlohmann::json::from_msgpack (raw);
+        if (!j.contains ("elements") || !j.contains ("properties")) {
             return CreateErrorResponse (APIERR_BADPARS,
                 "payload must contain 'elements' and 'properties'");
         }
-        itEl->second.convert (elemGuids);
-        itPr->second.convert (propGuids);
+        for (const auto& s : j["elements"]) elemGuids.push_back (s.get<std::string> ());
+        for (const auto& s : j["properties"]) propGuids.push_back (s.get<std::string> ());
     } catch (const std::exception& e) {
         const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
         return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
