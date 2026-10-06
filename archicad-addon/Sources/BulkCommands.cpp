@@ -983,6 +983,32 @@ nlohmann::ordered_json GdlValueToJson (const API_AddParType& p)
     }
 }
 
+// ---- Element data collector ----
+// Общий сборщик element-data, используется:
+//   • BulkGetElementData::Execute (эта команда содержит свою КОПИЮ логики ниже —
+//     схлопнуть её в вызов CollectElementData отдельным патчем, когда
+//     with_data в BulkGetGroupMembers обкатается на живом AC26);
+//   • BulkGetGroupMembers::Execute с with_data=true.
+//
+// Структура опций зеркалит набор параметров payload'а BulkGetElementData.
+struct ElementDataOptions {
+    std::vector<std::string>     elemGuids;
+    std::vector<std::string>     propGuids;
+    std::vector<std::string>     gdlNames;
+    bool                         gdlAll = false;
+    std::vector<std::string>     classSystemGuids;
+    std::vector<API_ElemTypeID>  connectedTypes;
+    bool                         readGdl = false;
+    bool                         readClass = false;
+    bool                         withBbox = true;
+    bool                         withMesh = false;
+    bool                         applyTransform = true;
+    bool                         withGroupInfo = true;
+    bool                         withGroupMembers = false;
+};
+
+nlohmann::ordered_json CollectElementData (const ElementDataOptions& opts);
+
 // ---- Forward declarations helper'ов, определённых ниже ----
 // Эти функции живут в блоке BulkGetElementMeshCommand (ниже по файлу),
 // но BulkGetElementData вызывает их до их определений. Объявляем заранее.
