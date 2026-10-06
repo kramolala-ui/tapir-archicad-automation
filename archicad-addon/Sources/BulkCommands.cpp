@@ -1049,13 +1049,40 @@ GS::ObjectState BulkGetElementDataCommand::Execute (
     bool withBbox = true;
     bool withMesh = false;
     bool applyTransform = true;
+    bool readSelection = false;   // selected=true: читать текущее выделение
+    bool withGroupInfo = true;    // добавлять group_guid в params
+    bool withGroupMembers = false; // добавлять groups[...] в ответ
 
     try {
         nlohmann::json j = nlohmann::json::from_msgpack (raw);
-        if (!j.contains ("elements")) {
-            return CreateErrorResponse (APIERR_BADPARS, "payload must contain 'elements'");
+
+        // selected=true: элементы берём из выделения Archicad.
+        // elements тогда не обязателен. Если оба переданы — selected
+        // имеет приоритет (пользователь хочет «что сейчас выделено»).
+        if (j.contains ("selected")) {
+            readSelection = j["selected"].get<bool> ();
         }
-        for (const auto& s : j["elements"]) elemGuids.push_back (s.get<std::string> ());
+        if (readSelection) {
+            API_SelectionInfo selInfo = {};
+            GS::Array<API_Neig> neigs;
+            if (ACAPI_Selection_Get (&selInfo, &neigs, false, true) != NoError) {
+                return CreateErrorResponse (APIERR_GENERAL, "ACAPI_Selection_Get failed");
+            }
+            for (const API_Neig& neig : neigs) {
+                if (neig.guid != APINULLGuid) {
+                    elemGuids.push_back (APIGuidToString (neig.guid).ToCStr ().Get ());
+                }
+            }
+        } else if (j.contains ("elements")) {
+            for (const auto& s : j["elements"]) elemGuids.push_back (s.get<std::string> ());
+        } else {
+            return CreateErrorResponse (APIERR_BADPARS,
+                "payload must contain 'elements' or 'selected: true'");
+        }
+
+        if (j.contains ("with_group_info"))    withGroupInfo    = j["with_group_info"].get<bool> ();
+        if (j.contains ("with_group_members")) withGroupMembers = j["with_group_members"].get<bool> ();
+
         if (j.contains ("properties")) {
             for (const auto& s : j["properties"]) propGuids.push_back (s.get<std::string> ());
         }
