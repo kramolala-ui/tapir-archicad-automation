@@ -303,13 +303,18 @@ C++:
 |---|---|---|
 | 1 | `BulkPing` с base64 | **✓ работает** (2026-10-05) |
 | 2 | + zstd (FetchContent v1.5.6) | **✓ работает** (2026-10-06, round-trip 16 ms) |
-| 3 | + msgpack-cxx (header-only) | **✓ работает** (2026-10-06) |
+| 3 | + JSON-структуры (nlohmann/json) → msgpack на проводе | **✓ работает** (2026-10-06) |
 | 4 | `BulkGetPropertyValues` | **✓ работает** (2026-10-06, чанки по 20) |
 | 5 | `BulkGetTexts` | **✓ работает** (2026-10-06, Text + Label) |
 | 6 | `BulkSetTexts` | **✓ работает** (2026-10-06, undo-barrier) |
 | 7 | `BulkFindReplaceText` | **✓ работает** (2026-10-06, dry_run без undo) |
 | 8 | Пакетный ACAPI (см. 4a) | TODO |
 | 9 | Остальные bulk-команды | TODO |
+
+**Замечание про msgpack:** изначально планировался `msgpack-cxx` — но
+он падает на MSVC с C2766 (см. раздел 5). На проводе **тот же формат
+msgpack**, кодируется через `nlohmann::json::to_msgpack`. Python-клиент
+не меняется.
 
 ### Подключение zstd в CMakeLists.txt
 
