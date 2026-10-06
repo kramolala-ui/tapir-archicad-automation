@@ -1114,41 +1114,64 @@ GS::ObjectState BulkGetElementDataCommand::Execute (
         entity["metadata"]["aspects_loaded"].push_back ("details");
 
         // ---- bbox ----
+        // Стратегия: для всех типов, КРОМЕ Slab, — ACAPI_Element_CalcBounds
+        // (одна функция, работает для Object / Wall / Roof / Stair / Zone и др.).
+        // Для Slab CalcBounds идёт через 2D draw environment и падает с SIGSEGV,
+        // когда элемент не отрисован в текущем окне (#686, см. ElementCommands.cpp:4283).
+        // Поэтому для Slab — обход 3D-компонент (как в AccumulateSolidBodyBounds).
+        // Раньше мы применяли обход ко всем типам — у Object с GDL-геометрией
+        // body.nPgon == 0, и bbox не писался вообще.
         if (withBbox) {
-            API_ElemInfo3D info3D = {};
-            if (ACAPI_ModelAccess_Get3DInfo (element.header, &info3D) == NoError) {
-                double xMin = 1e30, yMin = 1e30, zMin = 1e30;
-                double xMax = -1e30, yMax = -1e30, zMax = -1e30;
-                bool found = false;
-                for (Int32 iBody = info3D.fbody; iBody <= info3D.lbody; ++iBody) {
-                    API_Component3D bc = {};
-                    bc.header.typeID = API_BodyID;
-                    bc.header.index  = iBody;
-                    if (ACAPI_ModelAccess_GetComponent (&bc) != NoError) continue;
-                    if (bc.body.nPgon == 0) continue;
-                    found = true;
-                    if (bc.body.xmin < xMin) xMin = bc.body.xmin;
-                    if (bc.body.xmax > xMax) xMax = bc.body.xmax;
-                    if (bc.body.ymin < yMin) yMin = bc.body.ymin;
-                    if (bc.body.ymax > yMax) yMax = bc.body.ymax;
-                    if (bc.body.zmin < zMin) zMin = bc.body.zmin;
-                    if (bc.body.zmax > zMax) zMax = bc.body.zmax;
+            API_Box3D box3D = {};
+            bool haveBox = false;
+            const API_ElemTypeID bboxTypeID = GetElemTypeId (element.header);
+
+            if (bboxTypeID == API_SlabID) {
+                API_ElemInfo3D info3D = {};
+                if (ACAPI_ModelAccess_Get3DInfo (element.header, &info3D) == NoError) {
+                    double xMin = 1e30, yMin = 1e30, zMin = 1e30;
+                    double xMax = -1e30, yMax = -1e30, zMax = -1e30;
+                    bool found = false;
+                    for (Int32 iBody = info3D.fbody; iBody <= info3D.lbody; ++iBody) {
+                        API_Component3D bc = {};
+                        bc.header.typeID = API_BodyID;
+                        bc.header.index  = iBody;
+                        if (ACAPI_ModelAccess_GetComponent (&bc) != NoError) continue;
+                        if (bc.body.nPgon == 0) continue;
+                        found = true;
+                        if (bc.body.xmin < xMin) xMin = bc.body.xmin;
+                        if (bc.body.xmax > xMax) xMax = bc.body.xmax;
+                        if (bc.body.ymin < yMin) yMin = bc.body.ymin;
+                        if (bc.body.ymax > yMax) yMax = bc.body.ymax;
+                        if (bc.body.zmin < zMin) zMin = bc.body.zmin;
+                        if (bc.body.zmax > zMax) zMax = bc.body.zmax;
+                    }
+                    if (found) {
+                        box3D.xMin = xMin; box3D.yMin = yMin; box3D.zMin = zMin;
+                        box3D.xMax = xMax; box3D.yMax = yMax; box3D.zMax = zMax;
+                        haveBox = true;
+                    }
                 }
-                if (found) {
-                    params["bbox_min_x"] = xMin;
-                    params["bbox_min_y"] = yMin;
-                    params["bbox_min_z"] = zMin;
-                    params["bbox_max_x"] = xMax;
-                    params["bbox_max_y"] = yMax;
-                    params["bbox_max_z"] = zMax;
-                    params["bbox_center_x"] = (xMin + xMax) * 0.5;
-                    params["bbox_center_y"] = (yMin + yMax) * 0.5;
-                    params["bbox_center_z"] = (zMin + zMax) * 0.5;
-                    params["bbox_size_x"] = xMax - xMin;
-                    params["bbox_size_y"] = yMax - yMin;
-                    params["bbox_size_z"] = zMax - zMin;
-                    entity["metadata"]["aspects_loaded"].push_back ("bbox");
+            } else {
+                if (ACAPI_Element_CalcBounds (&element.header, &box3D) == NoError) {
+                    haveBox = true;
                 }
+            }
+
+            if (haveBox) {
+                params["bbox_min_x"] = box3D.xMin;
+                params["bbox_min_y"] = box3D.yMin;
+                params["bbox_min_z"] = box3D.zMin;
+                params["bbox_max_x"] = box3D.xMax;
+                params["bbox_max_y"] = box3D.yMax;
+                params["bbox_max_z"] = box3D.zMax;
+                params["bbox_center_x"] = (box3D.xMin + box3D.xMax) * 0.5;
+                params["bbox_center_y"] = (box3D.yMin + box3D.yMax) * 0.5;
+                params["bbox_center_z"] = (box3D.zMin + box3D.zMax) * 0.5;
+                params["bbox_size_x"] = box3D.xMax - box3D.xMin;
+                params["bbox_size_y"] = box3D.yMax - box3D.yMin;
+                params["bbox_size_z"] = box3D.zMax - box3D.zMin;
+                entity["metadata"]["aspects_loaded"].push_back ("bbox");
             }
         }
 
