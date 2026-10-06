@@ -1349,6 +1349,10 @@ GSErrCode Initialize (void)
             bulkCommands, "1.0.0",
             "Bulk find-and-replace of a substring inside all Text/Label elements of the project (or a given subset). Input payload: {find, replace, case_sensitive, dry_run, elements?}. dry_run=true — only report matches; false — apply. Output payload: {find, replace, dry_run, scanned_count, matched_count, replaced_count, matches: [{elementId, type, before, after}]}."
         );
+        err |= RegisterCommand<BulkGetElementMeshCommand> (
+            bulkCommands, "0.1.0",
+            "(experimental) Bulk read of 3D mesh for many elements. Input payload: {elements: [guids], apply_transform?: bool=true}. Output payload: {rows: [{elementId, vertexCount, triangleCount, vertices: <binary float32 xyz>, triangles: <binary uint32 ijk>, error}]}. Uses ACAPI_ModelAccess_Get3DInfo + API_Component3D walk; fan-triangulation of polygons. Same wire format as ifcopenshell.geom."
+        );
         AddCommandGroup (bulkCommands);
     }
 
