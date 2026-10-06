@@ -1361,6 +1361,10 @@ GSErrCode Initialize (void)
             bulkCommands, "0.1.0",
             "Expand native Archicad element groups (Ctrl+G). Input payload: {element_guids?: [guids], group_guids?: [guids], recursive?: bool=true}. For each element_guid — find parent group via ACAPI_ElementGroup_GetGroup; for each group_guid — list members via ACAPI_ElementGroup_GetAllGroupedElems (recursive) or GetGroupedElems (direct). Output payload: {groups: [{source_guid, source_kind: 'element'|'group', group_guid|null, member_guids: [guids]}]}."
         );
+        err |= RegisterCommand<BulkCloneElementCommand> (
+            bulkCommands, "0.1.0",
+            "(experimental) Bulk-clone one donor element into N instances. Input: {source_guid, instances: [{pos_x, pos_y, level?, angle?, story_index?, layer_index?, params_override?}], delete_source?}. Output: {created_guids, errors}. v1: only API_ObjectID."
+        );
         AddCommandGroup (bulkCommands);
     }
 
