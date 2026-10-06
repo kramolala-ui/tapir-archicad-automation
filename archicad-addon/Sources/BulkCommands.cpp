@@ -1568,7 +1568,7 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
         return false;
     }
     return true;
-#endif  // ServerMainVers_2600
+#endif  // TAPIR_AC26_ONLY
 }
 
 // Плоский массив float32/uint32 -> байтовый вектор little-endian.
