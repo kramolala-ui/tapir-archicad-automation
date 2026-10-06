@@ -1139,6 +1139,23 @@ sysdep.hpp тянет `<boost/predef/other/endian.h>`).
 `ACAPI_CallUndoableCommand` (один undo на батч, dry_run без пустых
 undo). Исходник — `archicad-addon/Sources/BulkCommands.hpp/.cpp`.
 
+**2026-10-06:** Сборка зелёная на **AC25-29** (5 bulk-команд + nlohmann).
+Одновременно исправлено: msgpack-cxx → nlohmann/json (C2766 на MSVC,
+см. §5); `#undef snprintf` в BulkCommands.cpp (DevKit AC25/26 делает
+`#define snprintf _snprintf`, см. §5).
+
+**2026-10-06:** В IFC_analyzer добавлен `plugins/archicad_plugin/bulk_connection.py` —
+отдельный класс `BulkConnection` для bulk-канала (8 методов +
+свойство `tapir`). Независим от `TapirConnection`, переиспользует
+только транспорт `run_command`. Схема описана в §4e этого файла.
+Зависимости `msgpack`, `zstandard` добавлены в `requirements.txt`
+IFC_analyzer.
+
+**2026-10-06:** Замеры 5 bulk-команд на «Шаблоне гидравлики IFC» —
+см. раздел 9. Ключевая цифра: `BulkGetPropertyValues` 500×20 = 287 ms
+(10 000 значений), ×48 быстрее JSON-пути. `BulkGetTexts` 1006 элементов
+= 261 ms.
+
 ---
 
 ## 11. Контакты и ссылки
