@@ -579,6 +579,64 @@ Could NOT find Boost (missing: Boost_INCLUDE_DIR)`.
 Симптом: `fatal error C1083: Cannot open include file:
 'boost/predef/other/endian.h': No such file or directory`.
 
+### msgpack-cxx на MSVC — тупик (C2766), нужен nlohmann/json
+
+`msgpack-cxx 6.1.1` делает explicit-специализации для `wchar_t`
+и `unsigned short`. На MSVC это **один и тот же тип** (оба 16 бит) →
+компилятор ругается на дубликат.
+
+Симптом: `error C2766: explicit specialization;
+'msgpack::v1::adaptor::convert<wchar_t,void>' has already been defined`
+(×4: convert, pack, object, object_with_zone).
+
+**Макроса отключения нет.** Я выдумал `MSGPACK_NO_WCHAR_T` — его
+не существует. Реального обходного пути нет, кроме патча внутренностей
+библиотеки или `/Zc:wchar_t-` (меняет ABI).
+
+**Что делать:** заменить msgpack-cxx на `nlohmann/json` — там есть
+встроенная поддержка msgpack (`json::to_msgpack` / `from_msgpack`).
+Формат **на проводе тот же msgpack**, Python-клиент не меняется,
+на MSVC собирается без хаков.
+
+### DevKit AC25/26: `snprintf` определён как `_snprintf`
+
+DevKit AC25/26 (и только они) в своих заголовках делает:
+
+```c
+#define snprintf _snprintf
+```
+
+Хак для совместимости со старым MSVC. Любая header-only библиотека,
+которая использует `std::snprintf` — превращается препроцессором в
+`std::_snprintf` (не существует) → C2039.
+
+Симптом: `error C2039: '_snprintf': is not a member of 'std'`
+в `nlohmann/detail/input/binary_reader.hpp`.
+
+**Что делать:** перед `#include <nlohmann/json.hpp>` (или любой другой
+библиотеки, использующей `std::snprintf`):
+
+```cpp
+#ifdef snprintf
+    #undef snprintf
+#endif
+```
+
+На AC27+ макрос убран в самом DevKit, `#undef` — no-op. Работает для
+всех версий без `#ifdef ServerMainVers_*`.
+
+### Не выдумывать имена макросов — проверять в доках
+
+**Свежий пример (2026-10-06):** при добавлении msgpack написал
+`MSGPACK_NO_WCHAR_T` — потому что *предположил* такое имя. Реального
+макроса нет. Сборка падала с C2766, я правил несуществующее.
+
+**Правило:** перед использованием макроса вида `LIBRARY_NO_XXX` —
+проверить его существование: `git grep LIBRARY_NO_` в исходниках
+библиотеки, или раздел «Macros» в документации. Если не уверен —
+искать альтернативу (сменить библиотеку / патчить через CMake
+`PATCH_COMMAND`). Не писать «по аналогии».
+
 ### ACAPI_CallUndoableCommand — обязателен для мутаций модели
 
 `ACAPI_Element_Change` / `_Create` / `_Delete` **вне**
