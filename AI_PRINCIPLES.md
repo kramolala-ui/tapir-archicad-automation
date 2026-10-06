@@ -1521,6 +1521,120 @@ Bridge дописывал содержимое второй раз → чере�
     get_group_members()    # обёртка над BulkGetGroupMembers
     bulk_clone_element()   # обёртка над BulkCloneElement
 
+### Bridge: карта каналов (маркеров)
+
+Все маркеры — обёрнуты в один ```json-фенс. Один ответ = один фенс.
+
+    ===AI_REQUEST===        чтение кода (files / search / read / stat /
+                            outline / list / batch / live). Не более
+                            20 файлов на запрос (или свой max_files).
+                            Массив операций внутри одного блока —
+                            до 10 ops.
+
+    ===AI_CHANGES===        правки кода (write / replace / delete).
+                            Ровно один блок на ответ. Бэкап авто.
+                            Для кода с отступами — base64-варианты
+                            (content_b64 / old_b64 / new_b64).
+
+    ===AI_TESTS===          прогон pytest. groups / target / marker /
+                            extra / args.
+
+    ===AI_PROGRAM===        runtime: command (одна команда через
+                            dispatcher) / script (exec в контексте core)
+                            / smoke (offscreen-сборка окон). Свежий
+                            процесс = пустой ApplicationCore, вкладки
+                            'main' нет — создавать первым делом.
+
+    ===AI_FILES_REQUEST===  прицельное чтение ФАЙЛОВ-ДАННЫХ (docx,
+                            xlsx, txt, csv, json). Не код.
+
+    ===AI_FILES_CHANGES===  прицельная правка ФАЙЛОВ-ДАННЫХ.
+                            source read-only, output — новый файл.
+
+    ===AI_DONOR_*===        работа с донором (второй проект).
+                            AI_DONOR_REQUEST / AI_DONOR_CHANGES /
+                            AI_DONOR_PROGRAM / AI_TRANSFER.
+
+    ===META_PROGRAM===      запуск метапрограммы из meta/programs/.
+
+    ===GRAPH_OPS===         DSL граф-агента (роль B).
+
+    ===META_GRAPH===        мета-граф из мета-нод (LLM-мета-редактор).
+
+**Правила:**
+- Один ответ = один ```json-фенс, внутри — маркер с двух сторон и
+  валидный JSON. **Всё**, включая маркеры, внутри фенса.
+- Не смешивать ===AI_REQUEST=== и ===AI_CHANGES=== в одном ответе.
+- Не смешивать ===AI_CHANGES=== и ===AI_TESTS=== — сначала правка,
+  дождаться apply, потом тесты отдельным ответом.
+- Если пользователь потерял маркеры — парсер ищет JSON по фенсам и
+  балансу фигурных скобок, но это страховка. Правильно — оборачивать
+  целиком.
+
+### Bridge: диагностика при подозрении на ложный откат
+
+**Симптом:** Bridge написал «ОТКАЧЕНО — все изменения возвращены»,
+но подозрение, что правка на самом деле применилась (из-за бага
+HTTP 500 / ложных откатов прошлых версий).
+
+**Что делать — НЕ ретраить блок слепо.** Порядок:
+
+1. **Проверить фактическое состояние через ===AI_REQUEST===** (action=search
+   или action=read). Файл на GitHub — источник истины, не отчёт
+   Bridge. Например: `search pattern="BulkCloneElementCommand::Execute"`
+   → если совпадений 1 — правка на месте, ретрай не нужен.
+
+2. **Посмотреть поля отчёта** (после фикса от 2026-10-06):
+   `applied_local`, `applied_github`, `failed_local`, `failed_github`,
+   `github_not_rolled_back`, `verified_after_error`.
+
+   - `verified_after_error: true` — PUT прошёл, ошибка была только в
+     ответе; считать операцию успешной.
+   - `github_not_rolled_back: true` — в пакете были github://-правки,
+     они на сервере и НЕ откатываются (`version_manager` работает
+     только с локальной ФС). Ретрай = дубликаты.
+
+3. **Если правка действительно не применилась** — ретраить можно. Но
+   лучше бить мелкими кусками (2-3 правки на блок), чтобы избежать
+   больших PUT'ов, на которых чаще бывает HTTP 500.
+
+**Признак, что надо перезапустить AI Bridge:** правишь `agent_tools/*.py`
+(`response_handler.py`, `request_handler.py`, `github_provider.py`,
+`bridge.py`, `protocol.py`), а поведение остаётся старым. Правки
+этих файлов **не подхватываются на лету** — закрыть окно Bridge,
+открыть заново (см. §4b).
+
+**Проверка, что патч Bridge вообще на месте:** посмотреть метаданные
+файла через `stat`. `mtime` свежий + размер вырос (например,
+`response_handler.py` был 558 строк → стал 633) — значит патч на
+диске.
+
+### Bridge: сводка исправленных багов (2026-10-06)
+
+Собраны в сессии, все исправлены в `agent_tools/` локально. Требуют
+перезапуска Bridge.
+
+| # | Баг | Файл | Фикс |
+|---|---|---|---|
+| 1 | Молчаливая обрезка строк в `read` (400 символов) | `request_handler.py` | Параметр `max_line_chars` (default 2000), флаг `line_truncated` у каждой строки |
+| 2 | Молчаливая обрезка в `search` (300 символов) | `request_handler.py` | То же, `max_line_chars` |
+| 3 | Жёсткие лимиты `max_files=20` / `max_total_bytes=2MB` | `request_handler.py` | Параметры (default 200 / 20 MB) |
+| 4 | Жёсткий `max_ops=10` в batch | `request_handler.py` | Параметр (default 50) |
+| 5 | Жёсткий `max_limit=2000` строк за read | `request_handler.py` | Параметр (default 20000) |
+| 6 | HTTP 500 на PUT считался провалом, ретрай дописывал копии | `response_handler.py` | `_verify_github_write` — GET после ошибки, сверка содержимого |
+| 7 | Отчёт «все изменения откачены» при github-правках (version_manager их не откатывает) | `response_handler.py` | Раздельные `applied_local` / `applied_github` / `github_not_rolled_back` |
+
+**Свежий пример ущерба (до фиксов):** три ложных откатa подряд
+привели к **трём копиям** `BulkCloneElementCommand` в `BulkCommands.cpp`
+(и трём копиям `ApplyGdlOverride`). Компилятор молчал (файл
+синтаксически валиден), но линковка упала бы на `multiply defined
+symbol`. Дедуп сделан через большой replace с якорем на хвосте
+`BulkGetGroupMembers::Execute`.
+
+**Урок:** до фиксов **никогда не верить отчёту Bridge об откате** —
+проверять фактическое состояние файла. После фиксов — смотреть
+`applied_*` / `failed_*` / `verified_after_error`.
+
 ---
 
 ## 11. Контакты и ссылки
