@@ -930,14 +930,19 @@ Bridge пишет всегда в `WORK_BRANCH`. Алиасы `@work` и `@fresh
 | 12 байт, без сжатия | 15 ms |
 | Ответ | `size=12, preview_hex=48656c6c6f2c205441504952, zstd_version=10506` |
 
-**BulkGetTexts** (read-only, 30 элементов — 20 Text + 10 Label):
+**BulkGetTexts** (read-only):
 
-| Метрика | Значение |
-|---|---|
-| Время | **20 ms** |
-| Rows | 30 |
-| Непустых | 30 |
-| Тип | Text=20, Label=10 ✅ |
+| Тест | Время | Rows | Непустых | Тип |
+|---|---|---|---|---|
+| 30 элементов (20 Text + 10 Label) | 20 ms | 30 | 30 | Text=20, Label=10 ✅ |
+| **1006 элементов (487 Text + 519 Label)** | **261 ms** | 1006 | 1006 | Text=487, Label=519 ✅ |
+
+⚠️ **Текст Label — мусор.** Пример из «Шаблона гидравлики»: `'㵨㔱턠톀킏킴킾²'`,
+`'꣐苑뻐胑냐'`. Это **не текст** — у Label содержимое формируется из
+GDL-параметров (`label.u.symbol.libInd` + parameters), а `memo.textContent`
+для Label содержит что-то другое. Читать Label через
+`GetMemo(APIMemoMask_TextContent)` — **неверный путь**. Текст Text
+читается корректно.
 
 **BulkGetPropertyValues** (read, N элементов × K свойств):
 
