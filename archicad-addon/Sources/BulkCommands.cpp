@@ -908,22 +908,37 @@ bool StringToElemTypeID (const std::string& s, API_ElemTypeID& out)
 }
 
 // GDL value -> JSON. Best-effort.
+// Реальные имена APIParT_* и полей API_AddParType — из рабочего
+// ElementGDLParameterCommands.cpp (ConvertAddParIDToString + AddValue*):
+//   • численные типы всех мастей лежат в p.value.real (даже Integer —
+//     это double, приведение к int64 делается явно);
+//   • строки — p.value.uStr (UTF-16), конвертируем через GS::UniString;
+//   • APIParT_Ratio не существует в AC26;
+//   • Linetype пишется как APIParT_LineTyp (не APIParT_Linetype).
 nlohmann::ordered_json GdlValueToJson (const API_AddParType& p)
 {
     switch (p.typeID) {
         case APIParT_Integer:
         case APIParT_Boolean:
         case APIParT_PenCol:
-        case APIParT_Linetype:
+        case APIParT_LineTyp:
+        case APIParT_Mater:
         case APIParT_FillPat:
-            return static_cast<int64_t> (p.value.integer);
+        case APIParT_BuildingMaterial:
+        case APIParT_Profile:
+        case APIParT_LightSw:
+            return static_cast<int64_t> (p.value.real);
+        case APIParT_ColRGB:
+        case APIParT_Intens:
         case APIParT_RealNum:
         case APIParT_Length:
         case APIParT_Angle:
-        case APIParT_Ratio:
             return p.value.real;
         case APIParT_CString:
-            return p.value.str != nullptr ? std::string (p.value.str) : std::string ();
+        case APIParT_Title:
+            return p.value.uStr != nullptr
+                ? std::string (GS::UniString (p.value.uStr).ToCStr ().Get ())
+                : std::string ();
         default:
             return nullptr;
     }
