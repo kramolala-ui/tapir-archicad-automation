@@ -777,32 +777,37 @@ GS::ObjectState BulkSetTextsCommand::Execute (
     std::vector<ErrEntry> errors;
     size_t updatedCount = 0;
 
-    for (const Row& row : rows) {
-        API_Guid guid = APIGuidFromString (row.elementId.c_str ());
-        if (guid == APINULLGuid) {
-            errors.push_back ({row.elementId, "invalid guid"});
-            continue;
+    // Один undo-барьер на весь батч: без ACAPI_CallUndoableCommand
+    // изменения модели не применяются (или применяются, но undo-стек
+    // рвётся на каждый элемент). См. AI_PRINCIPLES.md, раздел 5.
+    ACAPI_CallUndoableCommand ("BulkSetTexts", [&]() {
+        for (const Row& row : rows) {
+            API_Guid guid = APIGuidFromString (row.elementId.c_str ());
+            if (guid == APINULLGuid) {
+                errors.push_back ({row.elementId, "invalid guid"});
+                continue;
+            }
+            API_Element element = {};
+            element.header.guid = guid;
+            if (ACAPI_Element_Get (&element) != NoError) {
+                errors.push_back ({row.elementId, "element not found"});
+                continue;
+            }
+            const GS::UniString text (row.text.c_str ());
+            GSErrCode e = NoError;
+            if (element.header.typeID == API_TextID) {
+                e = ApplyTextToElement (element, text, false);
+            } else if (element.header.typeID == API_LabelID &&
+                       element.label.labelClass == APILblClass_Text) {
+                e = ApplyTextToElement (element, text, true);
+            } else {
+                errors.push_back ({row.elementId, "unsupported element type"});
+                continue;
+            }
+            if (e == NoError) ++updatedCount;
+            else errors.push_back ({row.elementId, "change failed"});
         }
-        API_Element element = {};
-        element.header.guid = guid;
-        if (ACAPI_Element_Get (&element) != NoError) {
-            errors.push_back ({row.elementId, "element not found"});
-            continue;
-        }
-        const GS::UniString text (row.text.c_str ());
-        GSErrCode e = NoError;
-        if (element.header.typeID == API_TextID) {
-            e = ApplyTextToElement (element, text, false);
-        } else if (element.header.typeID == API_LabelID &&
-                   element.label.labelClass == APILblClass_Text) {
-            e = ApplyTextToElement (element, text, true);
-        } else {
-            errors.push_back ({row.elementId, "unsupported element type"});
-            continue;
-        }
-        if (e == NoError) ++updatedCount;
-        else errors.push_back ({row.elementId, "change failed"});
-    }
+    });
 
     msgpack::sbuffer outBuf;
     msgpack::packer<msgpack::sbuffer> pk (&outBuf);
