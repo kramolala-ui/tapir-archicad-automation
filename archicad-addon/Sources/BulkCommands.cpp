@@ -1187,12 +1187,21 @@ GS::ObjectState BulkGetElementDataCommand::Execute (
             params["object_y_ratio"] = element.object.yRatio;
             // Имя libPart — для переноса между проектами (индексы
             // разные, а имя стабильно).
+            //
+            // ⚠ AC26-only: ACAPI_LibPart_Get есть в DevKit 25/26; в AC27+
+            // функция переименована (в MigrationHelper.hpp есть алиасы
+            // ACAPI_LibraryPart_*, но пары для ACAPI_LibPart_Get нет).
+            // На 27+ object_lib_part_name не читается — остаётся только
+            // object_lib_part_index.
+            // TODO(§10b): version-aware путь для 27+.
+#if TAPIR_AC26_ONLY
             API_LibPart lp = {};
             lp.index = element.object.libInd;
             if (ACAPI_LibPart_Get (&lp) == NoError) {
                 params["object_lib_part_name"] =
                     GS::UniString (lp.docu_UName).ToCStr ().Get ();
             }
+#endif
         }
 
         // ---- group info ----
