@@ -1266,11 +1266,20 @@ IFC_analyzer.
 чтение Archicad-элемента одним Execute (details / bbox / properties /
 GDL / classifications / relations) через msgpack+zstd. См. §10a.
 
-**2026-10-06:** `BulkGetElementMesh` — stub. `ACAPI_3D_GetComponent`
-не даёт диапазонов вершин (у `API_BodyType` только счётчики и bbox).
-Рабочий путь: `ACAPI_3D_GetCurrentWindowSight` + `EXPGetModel` +
-`ModelerAPI::Element::GetTessellatedBody` (требует открытого
-3D-вида). Альтернатива — IFC как транспорт. См. §10a.
+**2026-10-06:** `BulkGetElementMesh` — реализован через ModelerAPI.
+Цепочка: `ACAPI_3D_GetCurrentWindowSight` → `Modeler::SightPtr` →
+`EXPGetModel` → обход `MeshBody` (`GetElement` / `GetTessellatedBody`
+/ `GetPolygon` / `GetConvexPolygon` / `GetVertexIndex` / `GetVertex`).
+Fan-триангуляция + дедупликация вершин через remap. **Требует
+активного 3D-окна** — Python-обёртка `get_element_mesh`
+(`ensure_3d_window=True`) переключает сама через
+`TapirConnection.change_window('3DModel')`.
+
+Модули `GSModelDevLib` / `GSModeler` линкуются автоматически через
+`LinkGSLibrariesToProject` (`Tools/CMakeCommon.cmake`) —
+`CMakeLists.txt` менять не надо. Резервный путь (если 3D-окна нет) —
+IFC-транспорт через `export_filtered_ifc` + `ifcopenshell.geom`.
+См. §10a.
 
 **2026-10-06:** Bulk-команды: три API-фикса закрыли сборку на
 AC25-29. `GetElemTypeId(element.header)` вместо несуществующего
