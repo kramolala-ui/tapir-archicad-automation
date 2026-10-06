@@ -645,9 +645,10 @@ GS::ObjectState BulkGetTextsCommand::Execute (
         if (element.header.guid != APINULLGuid &&
             ACAPI_Element_Get (&element) == NoError) {
             // GetMemo дёргаем ТОЛЬКО для Text/Label — иначе лишний вызов
-            // на каждый Wall/Slab в батче.
-            const bool isText = (element.header.typeID == API_TextID);
-            const bool isLabel = (element.header.typeID == API_LabelID &&
+            // на каждый Wall/Slab в батче. Тип элемента — через GetElemTypeId:
+            // у API_Elem_Head нет поля typeID (см. APIdefs_Elements.h).
+            const bool isText = (GetElemTypeId (element.header) == API_TextID);
+            const bool isLabel = (GetElemTypeId (element.header) == API_LabelID &&
                                   element.label.labelClass == APILblClass_Text);
             if (isText || isLabel) {
                 API_ElementMemo memo = {};
