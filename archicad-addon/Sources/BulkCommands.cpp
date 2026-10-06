@@ -1169,7 +1169,10 @@ GS::ObjectState BulkGetElementDataCommand::Execute (
                 const GSSize nParams = BMGetHandleSize ((GSHandle) memo.params) / sizeof (API_AddParType);
                 for (GSIndex ii = 0; ii < nParams; ++ii) {
                     const API_AddParType& p = (*memo.params)[ii];
-                    const std::string name = p.name.ToCStr ().Get ();
+                    // p.name — const char[32] (не GS::UniString): см. рабочий
+                    // ElementGDLParameterCommands.cpp, где actParam.name просто
+                    // пишется в ObjectState как есть.
+                    const std::string name (p.name);
                     if (!gdlAll) {
                         if (std::find (gdlNames.begin (), gdlNames.end (), name) == gdlNames.end ()) continue;
                     }
