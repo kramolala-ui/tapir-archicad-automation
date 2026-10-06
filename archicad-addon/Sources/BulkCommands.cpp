@@ -10,7 +10,7 @@
 #include <cstring>
 
 #include <zstd.h>
-#include <msgpack.hpp>
+#include <nlohmann/json.hpp>
 
 
 // ---------------------------------------------------------------------
