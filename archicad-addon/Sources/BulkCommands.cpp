@@ -990,9 +990,15 @@ GS::ObjectState BulkGetElementDataCommand::Execute (
     std::vector<std::string> elemGuids;
     std::vector<std::string> propGuids;
     std::vector<std::string> gdlNames;
+    std::vector<std::string> classSystemGuids;
+    std::vector<std::string> connectedTypeNames;
     bool readGdl = false;
     bool gdlAll = false;
+    bool readClass = false;
+    bool classAll = false;
     bool withBbox = true;
+    bool withMesh = false;
+    bool applyTransform = true;
 
     try {
         nlohmann::json j = nlohmann::json::from_msgpack (raw);
@@ -1011,14 +1017,45 @@ GS::ObjectState BulkGetElementDataCommand::Execute (
                 for (const auto& s : j["gdl_names"]) gdlNames.push_back (s.get<std::string> ());
             }
         }
-        if (j.contains ("with_bbox")) withBbox = j["with_bbox"].get<bool> ();
+        if (j.contains ("classifications")) {
+            readClass = true;
+            if (j["classifications"].is_string () && j["classifications"].get<std::string> () == "all") {
+                classAll = true;
+            } else if (j["classifications"].is_array ()) {
+                for (const auto& s : j["classifications"]) classSystemGuids.push_back (s.get<std::string> ());
+            }
+        }
+        if (j.contains ("connected_types")) {
+            for (const auto& s : j["connected_types"]) connectedTypeNames.push_back (s.get<std::string> ());
+        }
+        if (j.contains ("with_bbox"))       withBbox       = j["with_bbox"].get<bool> ();
+        if (j.contains ("with_mesh"))       withMesh       = j["with_mesh"].get<bool> ();
+        if (j.contains ("apply_transform")) applyTransform = j["apply_transform"].get<bool> ();
     } catch (const std::exception& e) {
         const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
         return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
     }
 
+    // Раскрываем classAll: собираем все системы классификации проекта.
+    if (classAll) {
+        GS::Array<API_ClassificationSystem> allSystems;
+        if (ACAPI_Classification_GetClassificationSystems (allSystems) == NoError) {
+            for (const API_ClassificationSystem& s : allSystems) {
+                classSystemGuids.push_back (APIGuidToString (s.guid).ToCStr ().Get ());
+            }
+        }
+    }
+
+    // Раскрываем connected_types: строка -> API_ElemTypeID.
+    std::vector<API_ElemTypeID> connectedTypes;
+    for (const std::string& s : connectedTypeNames) {
+        API_ElemTypeID t;
+        if (StringToElemTypeID (s, t)) connectedTypes.push_back (t);
+    }
+
     nlohmann::ordered_json out;
-    out["entities"] = nlohmann::json::array ();
+    out["entities"]  = nlohmann::json::array ();
+    out["relations"] = nlohmann::json::array ();
 
     const size_t kPropertyChunkSize = 20;
 
@@ -1047,6 +1084,7 @@ GS::ObjectState BulkGetElementDataCommand::Execute (
         params["layer_index"] = static_cast<int64_t> (element.header.layer);
         entity["metadata"]["aspects_loaded"].push_back ("details");
 
+        // ---- bbox ----
         if (withBbox) {
             API_ElemInfo3D info3D = {};
             if (ACAPI_ModelAccess_Get3DInfo (element.header, &info3D) == NoError) {
@@ -1085,6 +1123,7 @@ GS::ObjectState BulkGetElementDataCommand::Execute (
             }
         }
 
+        // ---- properties ----
         if (!propGuids.empty ()) {
             bool anyProp = false;
             for (size_t start = 0; start < propGuids.size (); start += kPropertyChunkSize) {
@@ -1108,6 +1147,7 @@ GS::ObjectState BulkGetElementDataCommand::Execute (
             if (anyProp) entity["metadata"]["aspects_loaded"].push_back ("properties");
         }
 
+        // ---- GDL ----
         if (readGdl) {
             API_ElementMemo memo = {};
             if (ACAPI_Element_GetMemo (guid, &memo, APIMemoMask_AddPars) == NoError && memo.params != nullptr) {
@@ -1126,6 +1166,58 @@ GS::ObjectState BulkGetElementDataCommand::Execute (
             ACAPI_DisposeElemMemoHdls (&memo);
         }
 
+        // ---- classifications ----
+        if (readClass && !classSystemGuids.empty ()) {
+            bool anyClass = false;
+            for (const std::string& sysStr : classSystemGuids) {
+                API_Guid sysGuid = APIGuidFromString (sysStr.c_str ());
+                if (sysGuid == APINULLGuid) continue;
+                API_ClassificationItem item = {};
+                if (ACAPI_Element_GetClassificationInSystem (guid, sysGuid, item) == NoError
+                        && item.guid != APINULLGuid) {
+                    params["class/" + sysStr] = APIGuidToString (item.guid).ToCStr ().Get ();
+                    anyClass = true;
+                }
+            }
+            if (anyClass) entity["metadata"]["aspects_loaded"].push_back ("classifications");
+        }
+
+        // ---- connected (relations) ----
+        if (!connectedTypes.empty ()) {
+            bool anyConn = false;
+            for (API_ElemTypeID t : connectedTypes) {
+                GS::Array<API_Guid> connectedElements;
+                if (ACAPI_Grouping_GetConnectedElements (guid, t, &connectedElements) != NoError) continue;
+                for (const API_Guid& toGuid : connectedElements) {
+                    nlohmann::ordered_json rel;
+                    rel["from_guid"] = guidStr;
+                    rel["to_guid"]   = APIGuidToString (toGuid).ToCStr ().Get ();
+                    rel["kind"]      = "connected_to";
+                    rel["via"]       = ElementTypeName (t);
+                    out["relations"].push_back (rel);
+                    anyConn = true;
+                }
+            }
+            if (anyConn) entity["metadata"]["aspects_loaded"].push_back ("connected");
+        }
+
+        // ---- mesh ----
+        if (withMesh) {
+            std::vector<float> vertices;
+            std::vector<uint32_t> triangles;
+            std::string meshErr;
+            const bool ok = ExtractElementMesh (element.header, applyTransform,
+                                                vertices, triangles, meshErr);
+            nlohmann::ordered_json mesh;
+            mesh["vertexCount"]   = static_cast<uint64_t> (vertices.size () / 3);
+            mesh["triangleCount"] = static_cast<uint64_t> (triangles.size () / 3);
+            mesh["vertices"]      = nlohmann::json::binary (FloatsToBytes (vertices));
+            mesh["triangles"]     = nlohmann::json::binary (UIntsToBytes (triangles));
+            mesh["error"]         = ok ? nlohmann::json (nullptr) : nlohmann::json (meshErr);
+            entity["mesh"] = mesh;
+            if (ok) entity["metadata"]["aspects_loaded"].push_back ("mesh");
+        }
+
         out["entities"].push_back (entity);
     }
 
@@ -1139,6 +1231,7 @@ GS::ObjectState BulkGetElementDataCommand::Execute (
     response.Add ("compression", GS::UniString (outCompression.c_str ()));
     response.Add ("elements_count", static_cast<Int64> (elemGuids.size ()));
     response.Add ("entities_count", static_cast<Int64> (out["entities"].size ()));
+    response.Add ("relations_count", static_cast<Int64> (out["relations"].size ()));
     return response;
 }
 
