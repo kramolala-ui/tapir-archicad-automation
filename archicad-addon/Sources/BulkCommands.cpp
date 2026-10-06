@@ -2108,19 +2108,42 @@ GS::ObjectState BulkCloneElementCommand::Execute (
         return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
     }
 
-    std::string sourceGuidStr;
-    std::vector<nlohmann::ordered_json> instances;
+    // v2: payload принимает либо один донор (source_guid + instances),
+    // либо МАССИВ доноров: sources: [{source_guid, instances}, ...].
+    // Каждый донор имеет свои instances — можно и разные объекты размножить,
+    // и задать каждому свои позиции за один Execute.
+    struct SourceTask {
+        std::string sourceGuid;
+        std::vector<nlohmann::ordered_json> instances;
+    };
+    std::vector<SourceTask> sources;
     bool deleteSource = false;
 
     try {
         nlohmann::json j = nlohmann::json::from_msgpack (raw);
-        if (!j.contains ("source_guid") || !j.contains ("instances")) {
+        if (j.contains ("sources")) {
+            for (const auto& s : j["sources"]) {
+                if (!s.contains ("source_guid") || !s.contains ("instances")) {
+                    return CreateErrorResponse (APIERR_BADPARS,
+                        "'sources[i]' must contain 'source_guid' and 'instances'");
+                }
+                SourceTask t;
+                t.sourceGuid = s["source_guid"].get<std::string> ();
+                for (const auto& inst : s["instances"]) {
+                    t.instances.push_back (inst);
+                }
+                sources.push_back (t);
+            }
+        } else if (j.contains ("source_guid") && j.contains ("instances")) {
+            SourceTask t;
+            t.sourceGuid = j["source_guid"].get<std::string> ();
+            for (const auto& inst : j["instances"]) {
+                t.instances.push_back (inst);
+            }
+            sources.push_back (t);
+        } else {
             return CreateErrorResponse (APIERR_BADPARS,
-                "payload must contain 'source_guid' and 'instances'");
-        }
-        sourceGuidStr = j["source_guid"].get<std::string> ();
-        for (const auto& inst : j["instances"]) {
-            instances.push_back (inst);
+                "payload must contain either 'sources' array, or 'source_guid' + 'instances'");
         }
         if (j.contains ("delete_source")) deleteSource = j["delete_source"].get<bool> ();
     } catch (const std::exception& e) {
