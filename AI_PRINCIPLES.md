@@ -972,6 +972,7 @@ GDL-параметров (`label.u.symbol.libInd` + parameters), а `memo.textCo
 | Тест | Время | updated |
 |---|---|---|
 | 3 Text, той же длины | **126 ms** | 3/3 ✅ |
+| 50 Text, no-op (тот же текст) | 89 ms | 50/50 ✅ |
 | 3 Text, длиннее (баг AC26) | 47 ms | 0/3 ❌ code -2130312713 |
 
 **BulkFindReplaceText** (поиск/замена):
