@@ -1373,6 +1373,10 @@ GSErrCode Initialize (void)
             bulkCommands, "0.1.0",
             "Bulk-rotate elements by angle (radians) around center in one Execute. Input payload: {rotations: [{source_guid, angle_rad, center_x?, center_y?, copy?: bool=false}]}. If center not given, uses element's AABB center. Output payload: {per_source: [{source_guid, rotated, error}], rotated_count, errors_count}. One undo barrier for the whole batch."
         );
+        err |= RegisterCommand<BulkSetElementDataCommand> (
+            bulkCommands, "0.1.0",
+            "(experimental, v0.1.0) Universal bulk write. Currently supports story_index, layer_index, object_pos_x/pos_y/level/angle (Object/Lamp). GDL/*, Archicad/*, class/*, text — accepted but reported in ignored_not_implemented[] (to be implemented). bbox_* — read-only. Input payload: {entities: [{guid, parameters: {...}}], dry_run?: bool=false}. Output payload: {per_source: [{guid, applied, ignored_readonly, ignored_not_implemented, ignored_unknown, errors}], applied_count, errors_count, dry_run}. One undo barrier for the whole batch."
+        );
         AddCommandGroup (bulkCommands);
     }
 
