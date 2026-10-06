@@ -60,11 +60,14 @@ FetchContent_MakeAvailable (zstd)
 # только include-путь. FetchContent со SOURCE_SUBDIR в корне, потому что
 # у msgpack-cxx CMakeLists.txt в корне репозитория (не как у zstd).
 
+# Используем GIT_REPOSITORY+GIT_TAG, а не URL+URL_HASH: релизные tarball'ы
+# msgpack-cxx пересобираются (SHA256 меняется между прогонами), git-тег
+# стабилен. GIT_SHALLOW — тянем только коммит тега, без истории.
 FetchContent_Declare (
     msgpack_cxx
-    URL          https://github.com/msgpack/msgpack-c/releases/download/cpp-6.1.1/msgpack-cxx-6.1.1.tar.gz
-    URL_HASH     SHA256=7165f3aa966e8e4a9889e0e7a2174f92b8f1cf3dc1be0fd2c2c2a5c9bbdd41df
-    DOWNLOAD_EXTRACT_TIMESTAMP TRUE
+    GIT_REPOSITORY https://github.com/msgpack/msgpack-c.git
+    GIT_TAG        cpp-6.1.1
+    GIT_SHALLOW    TRUE
 )
 FetchContent_MakeAvailable (msgpack_cxx)
 
