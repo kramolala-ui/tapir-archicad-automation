@@ -816,6 +816,303 @@ GS::ObjectState BulkSetTextsCommand::Execute (
 
 
 // ---------------------------------------------------------------------
+//  BulkGetElementDataCommand  (V1)
+// ---------------------------------------------------------------------
+//
+// Комплексное чтение одного объекта: details + bbox + properties + GDL.
+// Возврат — сразу структура под Entity (плоский parameters dict),
+// чтобы Python-клиент мапил в Entity минимально.
+//
+// Вход (msgpack):
+//   { "elements":   ["guid", ...],
+//     "properties": ["prop-guid", ...],          // опц.
+//     "gdl_names":  ["A", "B", ...] | "all",    // опц.
+//     "with_bbox":  true }                      // default true
+//
+// Выход (msgpack):
+//   { "entities": [
+//       { "guid":         "...",
+//         "element_type": "Object" | "Wall" | ...,
+//         "parameters":   { "story_index": 0,
+//                            "layer_index": 679,
+//                            "bbox_min_x": ..., ..., "bbox_size_z": ...,
+//                            "<prop-guid>": "<value>",
+//                            "GDL/A": 2.0, ... },
+//         "metadata":     { "source": "archicad",
+//                            "aspects_loaded": [...],
+//                            "error": null | "element not found" } }
+//     ] }
+//
+// V2 (TODO): classifications, connected elements (relations), mesh включить
+// в тот же ответ (или звать BulkGetElementMesh отдельно).
+
+namespace {
+
+const char* ElementTypeName (API_ElemTypeID t)
+{
+    switch (t) {
+        case API_ObjectID:       return "Object";
+        case API_WallID:         return "Wall";
+        case API_SlabID:         return "Slab";
+        case API_ZoneID:         return "Zone";
+        case API_ColumnID:       return "Column";
+        case API_BeamID:         return "Beam";
+        case API_WindowID:       return "Window";
+        case API_DoorID:         return "Door";
+        case API_TextID:         return "Text";
+        case API_LabelID:        return "Label";
+        case API_MorphID:        return "Morph";
+        case API_MeshID:         return "Mesh";
+        case API_RoofID:         return "Roof";
+        case API_ShellID:        return "Shell";
+        case API_StairID:        return "Stair";
+        case API_RailingID:      return "Railing";
+        case API_CurtainWallID:  return "CurtainWall";
+        case API_HatchID:        return "Hatch";
+        case API_DrawingID:      return "Drawing";
+        case API_CutPlaneID:     return "CutPlane";
+        default:                 return "Unknown";
+    }
+}
+
+// GDL value -> JSON. Best-effort: real-типы -> number, CString -> string,
+// целочисленные -> number. Всё остальное — пропускаем (null).
+nlohmann::ordered_json GdlValueToJson (const API_AddParType& p)
+{
+    switch (p.typeID) {
+        case APIParT_Integer:
+        case APIParT_Boolean:
+        case APIParT_PenCol:
+        case APIParT_Linetype:
+        case APIParT_FillPat:
+            return static_cast<int64_t> (p.value.integer);
+        case APIParT_RealNum:
+        case APIParT_Length:
+        case APIParT_Angle:
+        case APIParT_Ratio:
+            return p.value.real;
+        case APIParT_CString:
+            return p.value.str != nullptr ? std::string (p.value.str) : std::string ();
+        default:
+            return nullptr;
+    }
+}
+
+}  // namespace
+
+BulkGetElementDataCommand::BulkGetElementDataCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkGetElementDataCommand::GetName () const
+{
+    return "BulkGetElementData";
+}
+
+GS::Optional<GS::UniString> BulkGetElementDataCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkGetElementDataCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64":     { "type": "string" },
+            "compression":     { "type": "string" },
+            "elements_count":  { "type": "integer" },
+            "entities_count":  { "type": "integer" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkGetElementDataCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    std::vector<std::string> elemGuids;
+    std::vector<std::string> propGuids;
+    std::vector<std::string> gdlNames;
+    bool readGdl = false;
+    bool gdlAll = false;
+    bool withBbox = true;
+
+    try {
+        nlohmann::json j = nlohmann::json::from_msgpack (raw);
+        if (!j.contains ("elements")) {
+            return CreateErrorResponse (APIERR_BADPARS, "payload must contain 'elements'");
+        }
+        for (const auto& s : j["elements"]) elemGuids.push_back (s.get<std::string> ());
+        if (j.contains ("properties")) {
+            for (const auto& s : j["properties"]) propGuids.push_back (s.get<std::string> ());
+        }
+        if (j.contains ("gdl_names")) {
+            readGdl = true;
+            if (j["gdl_names"].is_string () && j["gdl_names"].get<std::string> () == "all") {
+                gdlAll = true;
+            } else if (j["gdl_names"].is_array ()) {
+                for (const auto& s : j["gdl_names"]) gdlNames.push_back (s.get<std::string> ());
+            }
+        }
+        if (j.contains ("with_bbox")) withBbox = j["with_bbox"].get<bool> ();
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+
+    nlohmann::ordered_json out;
+    out["entities"] = nlohmann::json::array ();
+
+    const size_t kPropertyChunkSize = 20;
+
+    for (const std::string& guidStr : elemGuids) {
+        nlohmann::ordered_json entity;
+        entity["guid"] = guidStr;
+        entity["element_type"] = "Unknown";
+        entity["parameters"] = nlohmann::json::object ();
+        entity["metadata"] = nlohmann::json::object ();
+        entity["metadata"]["source"] = "archicad";
+        entity["metadata"]["aspects_loaded"] = nlohmann::json::array ();
+
+        API_Guid guid = APIGuidFromString (guidStr.c_str ());
+        API_Element element = {};
+        element.header.guid = guid;
+        if (guid == APINULLGuid || ACAPI_Element_Get (&element) != NoError) {
+            entity["metadata"]["error"] = "element not found";
+            out["entities"].push_back (entity);
+            continue;
+        }
+
+        entity["element_type"] = ElementTypeName (GetElemTypeId (element.header));
+
+        auto& params = entity["parameters"];
+        params["story_index"] = static_cast<int64_t> (element.header.floorInd);
+        params["layer_index"] = static_cast<int64_t> (element.header.layer);
+        entity["metadata"]["aspects_loaded"].push_back ("details");
+
+        if (withBbox) {
+            API_ElemInfo3D info3D = {};
+            if (ACAPI_ModelAccess_Get3DInfo (element.header, &info3D) == NoError) {
+                double xMin = 1e30, yMin = 1e30, zMin = 1e30;
+                double xMax = -1e30, yMax = -1e30, zMax = -1e30;
+                bool found = false;
+                for (Int32 iBody = info3D.fbody; iBody <= info3D.lbody; ++iBody) {
+                    API_Component3D bc = {};
+                    bc.header.typeID = API_BodyID;
+                    bc.header.index  = iBody;
+                    if (ACAPI_ModelAccess_GetComponent (&bc) != NoError) continue;
+                    if (bc.body.nPgon == 0) continue;
+                    found = true;
+                    if (bc.body.xmin < xMin) xMin = bc.body.xmin;
+                    if (bc.body.xmax > xMax) xMax = bc.body.xmax;
+                    if (bc.body.ymin < yMin) yMin = bc.body.ymin;
+                    if (bc.body.ymax > yMax) yMax = bc.body.ymax;
+                    if (bc.body.zmin < zMin) zMin = bc.body.zmin;
+                    if (bc.body.zmax > zMax) zMax = bc.body.zmax;
+                }
+                if (found) {
+                    params["bbox_min_x"] = xMin;
+                    params["bbox_min_y"] = yMin;
+                    params["bbox_min_z"] = zMin;
+                    params["bbox_max_x"] = xMax;
+                    params["bbox_max_y"] = yMax;
+                    params["bbox_max_z"] = zMax;
+                    params["bbox_center_x"] = (xMin + xMax) * 0.5;
+                    params["bbox_center_y"] = (yMin + yMax) * 0.5;
+                    params["bbox_center_z"] = (zMin + zMax) * 0.5;
+                    params["bbox_size_x"] = xMax - xMin;
+                    params["bbox_size_y"] = yMax - yMin;
+                    params["bbox_size_z"] = zMax - zMin;
+                    entity["metadata"]["aspects_loaded"].push_back ("bbox");
+                }
+            }
+        }
+
+        if (!propGuids.empty ()) {
+            bool anyProp = false;
+            for (size_t start = 0; start < propGuids.size (); start += kPropertyChunkSize) {
+                const size_t end = std::min (start + kPropertyChunkSize, propGuids.size ());
+                GS::Array<API_Guid> chunkGuids;
+                for (size_t k = start; k < end; ++k) {
+                    API_Guid g = APIGuidFromString (propGuids[k].c_str ());
+                    if (g != APINULLGuid) chunkGuids.Push (g);
+                }
+                GS::Array<API_Property> fetched;
+                if (ACAPI_Element_GetPropertyValuesByGuid (guid, chunkGuids, fetched) != NoError) continue;
+                for (const API_Property& p : fetched) {
+                    GS::UniString val;
+                    if (ACAPI_Property_GetPropertyValueString (p, &val) == NoError) {
+                        const std::string key = APIGuidToString (p.definition.guid).ToCStr ().Get ();
+                        params[key] = val.ToCStr ().Get ();
+                        anyProp = true;
+                    }
+                }
+            }
+            if (anyProp) entity["metadata"]["aspects_loaded"].push_back ("properties");
+        }
+
+        if (readGdl) {
+            API_ElementMemo memo = {};
+            if (ACAPI_Element_GetMemo (guid, &memo, APIMemoMask_AddPars) == NoError && memo.params != nullptr) {
+                const GSSize nParams = BMGetHandleSize ((GSHandle) memo.params) / sizeof (API_AddParType);
+                for (GSIndex ii = 0; ii < nParams; ++ii) {
+                    const API_AddParType& p = (*memo.params)[ii];
+                    const std::string name = p.name.ToCStr ().Get ();
+                    if (!gdlAll) {
+                        if (std::find (gdlNames.begin (), gdlNames.end (), name) == gdlNames.end ()) continue;
+                    }
+                    nlohmann::ordered_json v = GdlValueToJson (p);
+                    if (!v.is_null ()) params["GDL/" + name] = v;
+                }
+                entity["metadata"]["aspects_loaded"].push_back ("gdl");
+            }
+            ACAPI_DisposeElemMemoHdls (&memo);
+        }
+
+        out["entities"].push_back (entity);
+    }
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 =
+        EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64", GS::UniString (outB64.c_str ()));
+    response.Add ("compression", GS::UniString (outCompression.c_str ()));
+    response.Add ("elements_count", static_cast<Int64> (elemGuids.size ()));
+    response.Add ("entities_count", static_cast<Int64> (out["entities"].size ()));
+    return response;
+}
+
+
+// ---------------------------------------------------------------------
 //  BulkGetElementMeshCommand
 // ---------------------------------------------------------------------
 //
