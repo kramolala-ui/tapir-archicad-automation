@@ -10,7 +10,18 @@
 // отсутствует (error C3861 при компиляции), плюс на AC29 подключение
 // Model.hpp ломает GDL/PropertyListImp.hpp (каскад C2039/C3083).
 // Version-aware путь для 27+ — TODO (§10a). Пока mesh работает на AC26.
-#if defined (ServerMainVers_2600)
+//
+// ServerMainVers_2600 определён во ВСЕХ DevKit'ах начиная с AC26 — это код
+// версии, а не «эта версия = 26». Значит, чтобы выразить «ровно AC26»,
+// нужна явная проверка: 2600 есть И 2700 нет. Иначе mesh-код попадает в
+// сборку AC27/28/29 — и падает C3861 на ACAPI_3D_GetCurrentWindowSight.
+#if defined (ServerMainVers_2600) && !defined (ServerMainVers_2700)
+#define TAPIR_AC26_ONLY 1
+#else
+#define TAPIR_AC26_ONLY 0
+#endif
+
+#if TAPIR_AC26_ONLY
 #include "Model.hpp"
 #include "ModelElement.hpp"
 #include "ModelMeshBody.hpp"
