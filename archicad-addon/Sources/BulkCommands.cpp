@@ -2566,6 +2566,17 @@ GS::Optional<GS::UniString> BulkGetGroupMembersCommand::GetInputParametersSchema
     })";
 }
 
+// Payload (msgpack в payload_b64):
+//   { "element_guids": [...],           // опц.: для каждого найти его группу
+//     "group_guids":   [...],           // опц.: для каждой группы развернуть членов
+//     "recursive":     true,            // default true — включать подгруппы
+//     "with_data":     false,           // default false — только гуиды. true — полные entity
+//                                       //   через CollectElementData
+//     // при with_data=true также можно передать всё то же, что BulkGetElementData:
+//     "properties": [...], "gdl_names": "all"|[...], "classifications": "all"|[...],
+//     "connected_types": [...], "with_bbox": bool, "with_mesh": bool,
+//     "apply_transform": bool }
+
 GS::Optional<GS::UniString> BulkGetGroupMembersCommand::GetRawResponseSchema () const
 {
     return R"({
