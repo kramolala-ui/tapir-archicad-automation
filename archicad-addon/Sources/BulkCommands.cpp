@@ -981,52 +981,56 @@ GS::ObjectState BulkFindReplaceTextCommand::Execute (
     std::vector<Match> matches;
     size_t scannedCount = 0, matchedCount = 0, replacedCount = 0;
 
-    for (const API_Guid& guid : targets) {
-        API_Element element = {};
-        element.header.guid = guid;
-        if (ACAPI_Element_Get (&element) != NoError) continue;
+    // Undo-барьер один на всю операцию. Даже если все элементы — разные,
+    // пользователь откатит замену одной Ctrl+Z.
+    ACAPI_CallUndoableCommand ("BulkFindReplaceText", [&]() {
+        for (const API_Guid& guid : targets) {
+            API_Element element = {};
+            element.header.guid = guid;
+            if (ACAPI_Element_Get (&element) != NoError) continue;
 
-        std::string typeStr;
-        bool isLabel = false;
-        if (element.header.typeID == API_TextID) {
-            typeStr = "Text";
-        } else if (element.header.typeID == API_LabelID &&
-                   element.label.labelClass == APILblClass_Text) {
-            typeStr = "Label";
-            isLabel = true;
-        } else {
-            continue;
-        }
+            std::string typeStr;
+            bool isLabel = false;
+            if (element.header.typeID == API_TextID) {
+                typeStr = "Text";
+            } else if (element.header.typeID == API_LabelID &&
+                       element.label.labelClass == APILblClass_Text) {
+                typeStr = "Label";
+                isLabel = true;
+            } else {
+                continue;
+            }
 
-        API_ElementMemo memo = {};
-        if (ACAPI_Element_GetMemo (guid, &memo,
-                APIMemoMask_TextContent | APIMemoMask_Paragraph) != NoError) {
+            API_ElementMemo memo = {};
+            if (ACAPI_Element_GetMemo (guid, &memo,
+                    APIMemoMask_TextContent | APIMemoMask_Paragraph) != NoError) {
+                ACAPI_DisposeElemMemoHdls (&memo);
+                continue;
+            }
+            const GS::UniString currentUs = ReadTextFromMemo (memo);
             ACAPI_DisposeElemMemoHdls (&memo);
-            continue;
+            ++scannedCount;
+
+            const std::string current = currentUs.ToCStr ().Get ();
+            if (findAt (current, 0) == std::string::npos) continue;
+
+            const std::string next = replaceAll (current);
+            ++matchedCount;
+            Match mm;
+            mm.elementId = APIGuidToString (guid).ToCStr ().Get ();
+            mm.type = typeStr;
+            mm.before = current;
+            mm.after = next;
+            matches.push_back (mm);
+
+            if (dryRun) continue;
+
+            const GS::UniString nextUs (next.c_str ());
+            if (ApplyTextToElement (element, nextUs, isLabel) == NoError) {
+                ++replacedCount;
+            }
         }
-        const GS::UniString currentUs = ReadTextFromMemo (memo);
-        ACAPI_DisposeElemMemoHdls (&memo);
-        ++scannedCount;
-
-        const std::string current = currentUs.ToCStr ().Get ();
-        if (findAt (current, 0) == std::string::npos) continue;
-
-        const std::string next = replaceAll (current);
-        ++matchedCount;
-        Match mm;
-        mm.elementId = APIGuidToString (guid).ToCStr ().Get ();
-        mm.type = typeStr;
-        mm.before = current;
-        mm.after = next;
-        matches.push_back (mm);
-
-        if (dryRun) continue;
-
-        const GS::UniString nextUs (next.c_str ());
-        if (ApplyTextToElement (element, nextUs, isLabel) == NoError) {
-            ++replacedCount;
-        }
-    }
+    });
 
     msgpack::sbuffer outBuf;
     msgpack::packer<msgpack::sbuffer> pk (&outBuf);
