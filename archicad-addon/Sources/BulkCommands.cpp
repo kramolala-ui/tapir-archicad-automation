@@ -1,6 +1,7 @@
 #include "BulkCommands.hpp"
 #include "MigrationHelper.hpp"
 #include "ElementCreationCommands.hpp"
+#include "PropertyConversionUtils.hpp"
 
 // ModelerAPI — для BulkGetElementMesh (см. AI_PRINCIPLES.md §2c, §10a).
 // Заголовки лежат в Support/Modules/GSModelDevLib и GSModeler. Модули
