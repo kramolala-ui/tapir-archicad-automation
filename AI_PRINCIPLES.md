@@ -157,6 +157,73 @@ LLM (AI Bridge, @fresh)
 Правки сделаны 2026-10-06 в `agent_tools/*.py` локально, требуют
 **перезапуска AI Bridge** (см. 4b).
 
+## 2c. API DevKit — где лежит, что внутри
+
+**Расположение (локально):** `C:\API.Development.Kit.WIN.<N>.<build>`,
+например `C:\API.Development.Kit.WIN.26.3000` (AC26). Один DevKit на
+версию Archicad. На GitHub Actions — свой per-version (качается из
+`dl.graphisoft.com` в runner).
+
+### Ключевые папки
+
+    Support/Inc/                  заголовки API
+        ACAPinc.h                 точка входа (все ACAPI_*)
+        APIdefs_*.h               структуры (API_Element, API_AddParType,
+                                   API_ElemInfo3D, API_Component3D, ...)
+        MigrationHelper.hpp       версионные хелперы (GetElemTypeId,
+                                   GetAttributeIndex, ElementTypeName,
+                                   StringToElemTypeID)
+
+    Support/Modules/              модули Graphisoft — hpp + .lib
+        GSModelDevLib/            ModelerAPI: Model, Element, MeshBody,
+                                   Polygon, ConvexPolygon, Vertex
+        GSModeler/                exp.h: EXPGetModel (2 перегрузки),
+                                   SightPtr, IAttributeReader
+        Model3D/                  Modeler::SightPtr, Model3DMain.hpp
+        GSRoot/                   GS::UniString, GS::Array, GS::Owner
+        Geometry/                 базовые геом. типы
+        ... (41 модуль, у каждого Win/<Name>Imp.LIB)
+
+    Support/Lib/Win/ACAP_STAT.lib     статическая линковка API
+    Examples/ModelAccess_Test/        рабочий пример обхода 3D-геометрии
+                                       через ModelerAPI (ориентир для
+                                       BulkGetElementMesh)
+
+### Линковка модулей — уже автоматическая
+
+В `archicad-addon/Tools/CMakeCommon.cmake` функция
+`LinkGSLibrariesToProject(target acVersion devKitDir)` делает:
+
+```cmake
+file (GLOB ModuleFolders ${devKitDir}/Modules/*)
+target_include_directories (${target} SYSTEM PUBLIC ${ModuleFolders})
+file (GLOB LibFilesInFolder ${devKitDir}/Modules/*/*/*.lib)
+target_link_libraries (${target} ${LibFilesInFolder})
+```
+
+**Следствие:** все модули из `Support/Modules/` уже подключены —
+include-пути и `.lib`. Для использования ModelerAPI **менять
+`CMakeLists.txt` не надо** — достаточно `#include "Model.hpp"` (и
+подобных) в .cpp.
+
+### Ключевые константы для mesh
+
+  • `ACAPI_3D_GetCurrentWindowSight(void** sightPtr)` — в `ACAPinc.h`.
+    Возвращает `SightPtr` активного окна. Если активно 3D-окно — путь
+    к mesh открыт; если FloorPlan — вернёт nullptr или ошибку.
+  • `EXPGetModel(SightPtr, Model*, IAttributeReader*)` — в
+    `Modules/GSModeler/exp.h`. Строит `ModelerAPI::Model` из SightPtr.
+    Есть вторая перегрузка `(ConstModel3DPtr, ...)` — требует
+    построенной 3D-модели.
+  • `ACAPI_Attribute_GetCurrentAttributeSetReader()` — даёт
+    `IAttributeReader` для EXPGetModel.
+  • Обход mesh: `Model::GetElement(i, &Element)` →
+    `Element.GetTessellatedBody(iBody, &MeshBody)` →
+    `MeshBody.GetPolygon(i, &Polygon)` →
+    `Polygon.GetConvexPolygon(i, &ConvexPolygon)` →
+    `ConvexPolygon.GetVertexCount()`, `.GetVertexIndex(k)` →
+    `MeshBody.GetVertex(idx, &Vertex)` → `Vertex.x/y/z`.
+
 ## 2a. Сборка, установка и проверка через AI Bridge
 
 ### Сборка — ТОЛЬКО через GitHub Actions
