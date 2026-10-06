@@ -1161,6 +1161,12 @@ GS::ObjectState BulkGetElementDataCommand::Execute (
         // API_AttributeIndex — typedef Int32 в AC25/26, но класс в AC27+;
         // GetAttributeIndex (MigrationHelper.hpp) даёт int в обоих случаях.
         params["layer_index"] = static_cast<int64_t> (GetAttributeIndex (element.header.layer));
+        // ---- group info ----
+        // element.header.groupGuid — нативная группировка Archicad (Ctrl+G).
+        // APINULLGuid если элемент не в группе.
+        if (withGroupInfo && element.header.groupGuid != APINULLGuid) {
+            params["group_guid"] = APIGuidToString (element.header.groupGuid).ToCStr ().Get ();
+        }
         entity["metadata"]["aspects_loaded"].push_back ("details");
 
         // ---- bbox ----
