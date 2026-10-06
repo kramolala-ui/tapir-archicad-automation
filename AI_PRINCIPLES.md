@@ -303,10 +303,13 @@ C++:
 |---|---|---|
 | 1 | `BulkPing` с base64 | **✓ работает** (2026-10-05) |
 | 2 | + zstd (FetchContent v1.5.6) | **✓ работает** (2026-10-06, round-trip 16 ms) |
-| 3 | + msgpack-cxx (header-only) | TODO |
-| 4 | `Bulk.GetPropertyValues` | TODO |
-| 5 | Пакетный ACAPI (см. 4a) | TODO |
-| 6 | Остальные bulk-команды | TODO |
+| 3 | + msgpack-cxx (header-only) | **✓ работает** (2026-10-06) |
+| 4 | `BulkGetPropertyValues` | **✓ работает** (2026-10-06, чанки по 20) |
+| 5 | `BulkGetTexts` | **✓ работает** (2026-10-06, Text + Label) |
+| 6 | `BulkSetTexts` | **✓ работает** (2026-10-06, undo-barrier) |
+| 7 | `BulkFindReplaceText` | **✓ работает** (2026-10-06, dry_run без undo) |
+| 8 | Пакетный ACAPI (см. 4a) | TODO |
+| 9 | Остальные bulk-команды | TODO |
 
 ### Подключение zstd в CMakeLists.txt
 
