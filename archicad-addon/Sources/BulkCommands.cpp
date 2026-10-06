@@ -1,5 +1,6 @@
 #include "BulkCommands.hpp"
 #include "MigrationHelper.hpp"
+#include "ElementCreationCommands.hpp"
 
 #include <string>
 #include <vector>
