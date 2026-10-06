@@ -387,7 +387,7 @@ C++:
 | 6 | `BulkSetTexts` | **✓ работает** (2026-10-06, undo-barrier) |
 | 7 | `BulkFindReplaceText` | **✓ работает** (2026-10-06, dry_run без undo) |
 | 8 | `BulkGetElementData` V2 | **✓ работает** (2026-10-06, details/bbox/props/GDL/class/relations) |
-| 9 | `BulkGetElementMesh` | ⚠ **stub** (ждёт связку ModelerAPI + SightPtr, см. §10a) |
+| 9 | `BulkGetElementMesh` | **✓ реализовано** (2026-10-06, ModelerAPI через 3D-Sight) |
 | 10 | Пакетный ACAPI (см. 4a) | TODO |
 | 11 | Остальные bulk-команды | TODO |
 
