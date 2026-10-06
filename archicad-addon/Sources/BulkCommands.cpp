@@ -783,7 +783,7 @@ GS::ObjectState BulkSetTextsCommand::Execute (
     // Один undo-барьер на весь батч: без ACAPI_CallUndoableCommand
     // изменения модели не применяются (или применяются, но undo-стек
     // рвётся на каждый элемент). См. AI_PRINCIPLES.md, раздел 5.
-    ACAPI_CallUndoableCommand ("BulkSetTexts", [&]() {
+    ACAPI_CallUndoableCommand ("BulkSetTexts", [&]() -> GSErrCode {
         for (const Row& row : rows) {
             API_Guid guid = APIGuidFromString (row.elementId.c_str ());
             if (guid == APINULLGuid) {
@@ -810,6 +810,7 @@ GS::ObjectState BulkSetTextsCommand::Execute (
             if (e == NoError) ++updatedCount;
             else errors.push_back ({row.elementId, "change failed"});
         }
+        return NoError;
     });
 
     msgpack::sbuffer outBuf;
