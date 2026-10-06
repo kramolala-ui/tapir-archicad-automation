@@ -1337,6 +1337,18 @@ GSErrCode Initialize (void)
             bulkCommands, "1.0.0",
             "Bulk read of property values for many elements at once via msgpack+zstd. Input payload carries {elements: [guids], properties: [guids]}; output carries {rows: [{elementId, propertyValues}]}. One Execute, no JSON-wall, no unstable series of per-chunk calls."
         );
+        err |= RegisterCommand<BulkGetTextsCommand> (
+            bulkCommands, "1.0.0",
+            "Bulk read of text content of many Text/Label elements at once via msgpack+zstd. Input payload: {elements: [guids]}. Output payload: {rows: [{elementId, type, text}]}. One Execute for hundreds of texts."
+        );
+        err |= RegisterCommand<BulkSetTextsCommand> (
+            bulkCommands, "1.0.0",
+            "Bulk write of text content into many Text/Label elements at once via msgpack+zstd. Input payload: {rows: [{elementId, text}]}. Output payload: {updated, total, errors}. Reuses SetTextContentAndParagraphs (same code path as CreateTexts/ModifyTexts)."
+        );
+        err |= RegisterCommand<BulkFindReplaceTextCommand> (
+            bulkCommands, "1.0.0",
+            "Bulk find-and-replace of a substring inside all Text/Label elements of the project (or a given subset). Input payload: {find, replace, case_sensitive, dry_run, elements?}. dry_run=true — only report matches; false — apply. Output payload: {find, replace, dry_run, scanned_count, matched_count, replaced_count, matches: [{elementId, type, before, after}]}."
+        );
         AddCommandGroup (bulkCommands);
     }
 
