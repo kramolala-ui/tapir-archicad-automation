@@ -944,6 +944,18 @@ nlohmann::ordered_json GdlValueToJson (const API_AddParType& p)
     }
 }
 
+// ---- Forward declarations helper'ов, определённых ниже ----
+// Эти функции живут в блоке BulkGetElementMeshCommand (ниже по файлу),
+// но BulkGetElementData вызывает их до их определений. Объявляем заранее.
+void ApplyTranmat (const API_Tranmat& t, double& x, double& y, double& z);
+bool ExtractElementMesh (const API_Elem_Head& elemHead,
+                         bool applyTransform,
+                         std::vector<float>& outVertices,
+                         std::vector<uint32_t>& outTriangles,
+                         std::string& errOut);
+std::vector<uint8_t> FloatsToBytes (const std::vector<float>& v);
+std::vector<uint8_t> UIntsToBytes (const std::vector<uint32_t>& v);
+
 }  // namespace
 
 BulkGetElementDataCommand::BulkGetElementDataCommand () :
