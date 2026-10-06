@@ -1184,6 +1184,120 @@ IFC_analyzer.
 (10 000 значений), ×48 быстрее JSON-пути. `BulkGetTexts` 1006 элементов
 = 261 ms.
 
+**2026-10-06:** Собрана `BulkGetElementData` V2 — комплексное
+чтение Archicad-элемента одним Execute (details / bbox / properties /
+GDL / classifications / relations) через msgpack+zstd. См. §10a.
+
+**2026-10-06:** `BulkGetElementMesh` — stub. `ACAPI_3D_GetComponent`
+не даёт диапазонов вершин (у `API_BodyType` только счётчики и bbox).
+Рабочий путь: `ACAPI_3D_GetCurrentWindowSight` + `EXPGetModel` +
+`ModelerAPI::Element::GetTessellatedBody` (требует открытого
+3D-вида). Альтернатива — IFC как транспорт. См. §10a.
+
+**2026-10-06:** Bulk-команды: три API-фикса закрыли сборку на
+AC25-29. `GetElemTypeId(element.header)` вместо несуществующего
+`header.typeID`; `GetAttributeIndex(element.header.layer)` (в AC27+
+это класс, а не Int32); лямбда `ACAPI_CallUndoableCommand` должна
+возвращать `NoError`. См. §10a «Ключевые API-факты».
+
+---
+
+## 10a. BulkGetElementData / BulkGetElementMesh / геометрия (2026-10-06)
+
+### BulkGetElementData V2 — done
+
+Один Execute возвращает `{entities: [...], relations: [...]}` — все
+данные Archicad-элемента одним пакетом (msgpack + zstd):
+
+    entity.params:
+      story_index, layer_index,
+      bbox_size_x/y/z,
+      GDL/<name>                (GDL-параметры)
+      Archicad/<name>           (пользовательские свойства)
+      class/<system>/<code>     (классификации)
+
+    relations: [{from, to, type, ...}]
+
+Исходник — `archicad-addon/Sources/BulkCommands.hpp/.cpp`.
+
+### BulkGetElementMesh — stub
+
+Попытка через `ACAPI_3D_GetComponent` **не удалась**: у
+`API_BodyType` нет диапазонов вершин/полигонов (только счётчики
+nVert / nPgon / nEdge / nPedg / nVect и bbox). Полей
+`fvert / lvert / fpgon / lpgon` нет ни в одном заголовке DevKit
+(проверено поиском по `Inc/`).
+
+**Рабочий путь (открыт, но не реализован):**
+
+    1. ACAPI_3D_GetCurrentWindowSight(void** sightPtr)
+       — даёт Sight текущего 3D-окна. Доступно из ОБЫЧНОЙ
+       команды (не только в File→Save As handler — ключевое
+       открытие).
+    2. EXPGetModel(sight, &ModelerAPI::Model, attrReader)
+       — строит Model.
+    3. ModelerAPI::Element::GetTessellatedBody(iBody, &MeshBody)
+       — даёт mesh: MeshBody.GetVertexCount(), GetPolygon(i, &P),
+       P.GetConvexPolygon(i, &CP), CP.GetVertexIndex(i),
+       body.GetVertex(idx, &v) → v.x/y/z.
+
+**Ограничение:** нужен ОТКРЫТЫЙ 3D-вид в Archicad. Из FloorPlan
+Sight не получить.
+
+**Альтернатива — IFC как транспорт:**
+
+    1. TapirConnection.export_filtered_ifc(guids=[...])
+       — только выбранные элементы (уже есть в Tapir).
+    2. ifcopenshell.geom.create_shape() — читает mesh из IFC.
+    3. Матчинг IFC GlobalID ↔ Archicad GUID через archicad_sync.
+
+Плюс: работает сразу, ifcopenshell надёжен.
+Минус: экспорт + round-trip через файл (секунды на 100 элементов).
+
+### Ключевые API-факты (для будущих команд)
+
+Собраны из ошибок компиляции в этой сессии:
+
+  • `element.header.typeID` НЕ существует. Правильно —
+    `GetElemTypeId(element.header)` (helper из
+    `MigrationHelper.hpp`). Исключение: у `API_AttributeHeader`
+    есть `.typeID` — `attribute.header.typeID = API_BuildingMaterialID`.
+
+  • `element.header.layer` — `API_AttributeIndex`. В AC25/26 —
+    typedef Int32, в AC27+ — класс. `static_cast<int64_t>` падает
+    в AC27+ (C2440). Правильно —
+    `GetAttributeIndex(element.header.layer)`.
+
+  • `API_AddParType.value.real` — ВСЕГДА `double`. Даже для
+    целочисленных типов и типов-атрибутов (APIParT_PenCol,
+    APIParT_LineTyp, APIParT_Mater, APIParT_FillPat,
+    APIParT_BuildingMaterial, APIParT_Profile, APIParT_LightSw).
+    `p.value.integer` НЕ существует.
+
+  • `API_AddParType.name` — `const char[32]`, не `GS::UniString`.
+    `std::string(p.name)` работает, `p.name.ToCStr()` — нет.
+
+  • `ACAPI_CallUndoableCommand` в AC26+ принимает
+    `std::function<GSErrCode(void)>`. Лямбда обязана возвращать
+    `NoError` (иначе C2664).
+
+  • `msgpack-cxx` на MSVC требует `MSGPACK_NO_WCHAR_T` (иначе
+    wchar_t ≡ unsigned short → C2766) и `MSGPACK_NO_BOOST`
+    (иначе sysdep.hpp тянет `<boost/predef/other/endian.h>`).
+
+  • `SetTextContentAndParagraphs` — публичная утилита из
+    `ElementCreationCommands.hpp`. Переиспользуется в новых
+    командах вместо копирования логики.
+
+  • `ACAPI_DisposeElemMemoHdls(&memo)` — после `GetMemo` и
+    после `Change` (Change копирует данные, memo остаётся
+    нашим). Паттерн совпадает с ElementCommands.cpp:2420.
+
+  • `ACAPI_Element_GetElemList(API_TextID, &guids)` — двухаргументная
+    форма (без APIFilterViewType) возвращает ВСЕ элементы проекта
+    (не только текущего вида). Работает для API_TextID, API_LabelID
+    и любого другого elem type.
+
 ---
 
 ## 11. Контакты и ссылки
