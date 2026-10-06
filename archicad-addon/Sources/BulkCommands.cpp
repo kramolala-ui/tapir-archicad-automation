@@ -1292,87 +1292,34 @@ void ApplyTranmat (const API_Tranmat& t, double& x, double& y, double& z)
 
 // Извлекает mesh одного элемента. Возвращает false + errOut — если
 // ACAPI не дал информацию или тело пустое.
-bool ExtractElementMesh (const API_Elem_Head& elemHead,
-                         bool applyTransform,
-                         std::vector<float>& outVertices,
-                         std::vector<uint32_t>& outTriangles,
+//
+// ⚠ ВРЕМЕННЫЙ STUB. Точные имена полей в API_BodyType / API_VertType /
+// API_PgonType / API_PedgType из AC26 DevKit (файл APIdefs_3D.h) на момент
+// написания неизвестны, а угадывание (fvert/lvert/fpgon/lpgon/API_PEdgID/
+// pedg.vert1) дало 6 ошибок компиляции. Как только поля будут известны
+// (или найдётся путь через ModelerAPI::MeshBody) — здесь вернётся полная
+// реализация обхода 3D-компонент.
+//
+// Сам API доступа известен точно (см. AccumulateSolidBodyBounds в
+// ElementCommands.cpp:4127):
+//   API_ElemInfo3D info3D;
+//   ACAPI_ModelAccess_Get3DInfo (elemHead, &info3D);
+//   for (Int32 iBody = info3D.fbody; iBody <= info3D.lbody; ++iBody) {
+//       API_Component3D bodyComp = {};
+//       bodyComp.header.typeID = API_BodyID;
+//       bodyComp.header.index  = iBody;
+//       ACAPI_ModelAccess_GetComponent (&bodyComp);
+//       // bodyComp.body.xmin/xmax/... — точно рабочие поля;
+//       // для вершин/полигонов нужны точные имена (см. выше).
+//   }
+bool ExtractElementMesh (const API_Elem_Head& /*elemHead*/,
+                         bool /*applyTransform*/,
+                         std::vector<float>& /*outVertices*/,
+                         std::vector<uint32_t>& /*outTriangles*/,
                          std::string& errOut)
 {
-    API_ElemInfo3D info3D = {};
-    if (ACAPI_ModelAccess_Get3DInfo (elemHead, &info3D) != NoError) {
-        errOut = "Get3DInfo failed";
-        return false;
-    }
-
-    bool anySolidBody = false;
-
-    for (Int32 iBody = info3D.fbody; iBody <= info3D.lbody; ++iBody) {
-        API_Component3D bodyComp = {};
-        bodyComp.header.typeID = API_BodyID;
-        bodyComp.header.index  = iBody;
-        if (ACAPI_ModelAccess_GetComponent (&bodyComp) != NoError) continue;
-        if (bodyComp.body.nPgon == 0) continue;  // wire-only, skip
-
-        anySolidBody = true;
-
-        // Маппинг: "глобальный индекс ACAPI" -> "индекс в outVertices/3"
-        std::map<Int32, uint32_t> vertRemap;
-
-        // ---- 1. Вершины ----
-        for (Int32 iVert = bodyComp.body.fvert; iVert <= bodyComp.body.lvert; ++iVert) {
-            API_Component3D vertComp = {};
-            vertComp.header.typeID = API_VertID;
-            vertComp.header.index  = iVert;
-            if (ACAPI_ModelAccess_GetComponent (&vertComp) != NoError) continue;
-
-            double x = vertComp.vert.x;
-            double y = vertComp.vert.y;
-            double z = vertComp.vert.z;
-            if (applyTransform) ApplyTranmat (bodyComp.body.tranmat, x, y, z);
-
-            vertRemap[iVert] = static_cast<uint32_t> (outVertices.size () / 3);
-            outVertices.push_back (static_cast<float> (x));
-            outVertices.push_back (static_cast<float> (y));
-            outVertices.push_back (static_cast<float> (z));
-        }
-
-        // ---- 2. Полигоны -> треугольники (fan-триангуляция) ----
-        for (Int32 iPgon = bodyComp.body.fpgon; iPgon <= bodyComp.body.lpgon; ++iPgon) {
-            API_Component3D pgonComp = {};
-            pgonComp.header.typeID = API_PgonID;
-            pgonComp.header.index  = iPgon;
-            if (ACAPI_ModelAccess_GetComponent (&pgonComp) != NoError) continue;
-
-            // Цепочка вершин полигона: для каждого ребра берём его vert1.
-            // Обход идёт по контуру, последнее ребро замкнёт цепочку на первую.
-            std::vector<Int32> chain;
-            for (Int32 iPEdg = pgonComp.pgon.fpedg; iPEdg <= pgonComp.pgon.lpedg; ++iPEdg) {
-                API_Component3D pedgComp = {};
-                pedgComp.header.typeID = API_PEdgID;
-                pedgComp.header.index  = iPEdg;
-                if (ACAPI_ModelAccess_GetComponent (&pedgComp) != NoError) continue;
-                chain.push_back (pedgComp.pedg.vert1);
-            }
-            if (chain.size () < 3) continue;
-
-            // Fan: (chain[0], chain[k], chain[k+1]) для k=1..size-2
-            for (size_t k = 1; k + 1 < chain.size (); ++k) {
-                auto itA = vertRemap.find (chain[0]);
-                auto itB = vertRemap.find (chain[k]);
-                auto itC = vertRemap.find (chain[k + 1]);
-                if (itA == vertRemap.end () || itB == vertRemap.end () || itC == vertRemap.end ()) continue;
-                outTriangles.push_back (itA->second);
-                outTriangles.push_back (itB->second);
-                outTriangles.push_back (itC->second);
-            }
-        }
-    }
-
-    if (!anySolidBody) {
-        errOut = "no solid body";
-        return false;
-    }
-    return true;
+    errOut = "not implemented (awaiting APIdefs_3D.h)";
+    return false;
 }
 
 // Плоский массив float32/uint32 -> байтовый вектор little-endian.
