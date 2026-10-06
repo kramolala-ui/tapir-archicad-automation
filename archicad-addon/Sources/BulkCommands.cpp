@@ -1021,6 +1021,221 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
 std::vector<uint8_t> FloatsToBytes (const std::vector<float>& v);
 std::vector<uint8_t> UIntsToBytes (const std::vector<uint32_t>& v);
 
+
+// ---- CollectElementData ----
+// Полная логика сбора данных для списка гуидов. Единая точка для
+// BulkGetElementData (TODO: перевести на неё) и BulkGetGroupMembers с with_data.
+// Возвращает { entities: [...], relations: [...] }.
+nlohmann::ordered_json CollectElementData (const ElementDataOptions& opts)
+{
+    nlohmann::ordered_json out;
+    out["entities"]  = nlohmann::json::array ();
+    out["relations"] = nlohmann::json::array ();
+
+    const size_t kPropertyChunkSize = 20;
+
+    for (const std::string& guidStr : opts.elemGuids) {
+        nlohmann::ordered_json entity;
+        entity["guid"]         = guidStr;
+        entity["element_type"] = "Unknown";
+        entity["parameters"]   = nlohmann::json::object ();
+        entity["metadata"]     = nlohmann::json::object ();
+        entity["metadata"]["source"]          = "archicad";
+        entity["metadata"]["aspects_loaded"]  = nlohmann::json::array ();
+
+        API_Guid guid = APIGuidFromString (guidStr.c_str ());
+        API_Element element = {};
+        element.header.guid = guid;
+        if (guid == APINULLGuid || ACAPI_Element_Get (&element) != NoError) {
+            entity["metadata"]["error"] = "element not found";
+            out["entities"].push_back (entity);
+            continue;
+        }
+
+        entity["element_type"] = ElementTypeName (GetElemTypeId (element.header));
+
+        auto& params = entity["parameters"];
+        params["story_index"] = static_cast<int64_t> (element.header.floorInd);
+        params["layer_index"] = static_cast<int64_t> (GetAttributeIndex (element.header.layer));
+
+        if (GetElemTypeId (element.header) == API_ObjectID) {
+            params["object_lib_part_index"] = static_cast<int64_t> (element.object.libInd);
+            params["object_pos_x"]  = element.object.pos.x;
+            params["object_pos_y"]  = element.object.pos.y;
+            params["object_level"]  = element.object.level;
+            params["object_angle"]  = element.object.angle;
+            params["object_x_ratio"] = element.object.xRatio;
+            params["object_y_ratio"] = element.object.yRatio;
+#if TAPIR_AC26_ONLY
+            API_LibPart lp = {};
+            lp.index = element.object.libInd;
+            if (ACAPI_LibPart_Get (&lp) == NoError) {
+                params["object_lib_part_name"] =
+                    GS::UniString (lp.docu_UName).ToCStr ().Get ();
+            }
+#endif
+        }
+
+        if (opts.withGroupInfo && element.header.groupGuid != APINULLGuid) {
+            params["group_guid"] = APIGuidToString (element.header.groupGuid).ToCStr ().Get ();
+        }
+        entity["metadata"]["aspects_loaded"].push_back ("details");
+
+        // ---- bbox ----
+        if (opts.withBbox) {
+            API_Box3D box3D = {};
+            bool haveBox = false;
+            const API_ElemTypeID bboxTypeID = GetElemTypeId (element.header);
+
+            if (bboxTypeID == API_SlabID) {
+                API_ElemInfo3D info3D = {};
+                if (ACAPI_ModelAccess_Get3DInfo (element.header, &info3D) == NoError) {
+                    double xMin = 1e30, yMin = 1e30, zMin = 1e30;
+                    double xMax = -1e30, yMax = -1e30, zMax = -1e30;
+                    bool found = false;
+                    for (Int32 iBody = info3D.fbody; iBody <= info3D.lbody; ++iBody) {
+                        API_Component3D bc = {};
+                        bc.header.typeID = API_BodyID;
+                        bc.header.index  = iBody;
+                        if (ACAPI_ModelAccess_GetComponent (&bc) != NoError) continue;
+                        if (bc.body.nPgon == 0) continue;
+                        found = true;
+                        if (bc.body.xmin < xMin) xMin = bc.body.xmin;
+                        if (bc.body.xmax > xMax) xMax = bc.body.xmax;
+                        if (bc.body.ymin < yMin) yMin = bc.body.ymin;
+                        if (bc.body.ymax > yMax) yMax = bc.body.ymax;
+                        if (bc.body.zmin < zMin) zMin = bc.body.zmin;
+                        if (bc.body.zmax > zMax) zMax = bc.body.zmax;
+                    }
+                    if (found) {
+                        box3D.xMin = xMin; box3D.yMin = yMin; box3D.zMin = zMin;
+                        box3D.xMax = xMax; box3D.yMax = yMax; box3D.zMax = zMax;
+                        haveBox = true;
+                    }
+                }
+            } else {
+                if (ACAPI_Element_CalcBounds (&element.header, &box3D) == NoError) {
+                    haveBox = true;
+                }
+            }
+
+            if (haveBox) {
+                params["bbox_min_x"] = box3D.xMin;
+                params["bbox_min_y"] = box3D.yMin;
+                params["bbox_min_z"] = box3D.zMin;
+                params["bbox_max_x"] = box3D.xMax;
+                params["bbox_max_y"] = box3D.yMax;
+                params["bbox_max_z"] = box3D.zMax;
+                params["bbox_center_x"] = (box3D.xMin + box3D.xMax) * 0.5;
+                params["bbox_center_y"] = (box3D.yMin + box3D.yMax) * 0.5;
+                params["bbox_center_z"] = (box3D.zMin + box3D.zMax) * 0.5;
+                params["bbox_size_x"] = box3D.xMax - box3D.xMin;
+                params["bbox_size_y"] = box3D.yMax - box3D.yMin;
+                params["bbox_size_z"] = box3D.zMax - box3D.zMin;
+                entity["metadata"]["aspects_loaded"].push_back ("bbox");
+            }
+        }
+
+        // ---- properties ----
+        if (!opts.propGuids.empty ()) {
+            bool anyProp = false;
+            for (size_t start = 0; start < opts.propGuids.size (); start += kPropertyChunkSize) {
+                const size_t end = std::min (start + kPropertyChunkSize, opts.propGuids.size ());
+                GS::Array<API_Guid> chunkGuids;
+                for (size_t k = start; k < end; ++k) {
+                    API_Guid g = APIGuidFromString (opts.propGuids[k].c_str ());
+                    if (g != APINULLGuid) chunkGuids.Push (g);
+                }
+                GS::Array<API_Property> fetched;
+                if (ACAPI_Element_GetPropertyValuesByGuid (guid, chunkGuids, fetched) != NoError) continue;
+                for (const API_Property& p : fetched) {
+                    GS::UniString val;
+                    if (ACAPI_Property_GetPropertyValueString (p, &val) == NoError) {
+                        const std::string key = APIGuidToString (p.definition.guid).ToCStr ().Get ();
+                        params[key] = val.ToCStr ().Get ();
+                        anyProp = true;
+                    }
+                }
+            }
+            if (anyProp) entity["metadata"]["aspects_loaded"].push_back ("properties");
+        }
+
+        // ---- GDL ----
+        if (opts.readGdl) {
+            API_ElementMemo memo = {};
+            if (ACAPI_Element_GetMemo (guid, &memo, APIMemoMask_AddPars) == NoError && memo.params != nullptr) {
+                const GSSize nParams = BMGetHandleSize ((GSHandle) memo.params) / sizeof (API_AddParType);
+                for (GSIndex ii = 0; ii < nParams; ++ii) {
+                    const API_AddParType& p = (*memo.params)[ii];
+                    const std::string name (p.name);
+                    if (!opts.gdlAll) {
+                        if (std::find (opts.gdlNames.begin (), opts.gdlNames.end (), name) == opts.gdlNames.end ()) continue;
+                    }
+                    nlohmann::ordered_json v = GdlValueToJson (p);
+                    if (!v.is_null ()) params["GDL/" + name] = v;
+                }
+                entity["metadata"]["aspects_loaded"].push_back ("gdl");
+            }
+            ACAPI_DisposeElemMemoHdls (&memo);
+        }
+
+        // ---- classifications ----
+        if (opts.readClass && !opts.classSystemGuids.empty ()) {
+            bool anyClass = false;
+            for (const std::string& sysStr : opts.classSystemGuids) {
+                API_Guid sysGuid = APIGuidFromString (sysStr.c_str ());
+                if (sysGuid == APINULLGuid) continue;
+                API_ClassificationItem item = {};
+                if (ACAPI_Element_GetClassificationInSystem (guid, sysGuid, item) == NoError
+                        && item.guid != APINULLGuid) {
+                    params["class/" + sysStr] = APIGuidToString (item.guid).ToCStr ().Get ();
+                    anyClass = true;
+                }
+            }
+            if (anyClass) entity["metadata"]["aspects_loaded"].push_back ("classifications");
+        }
+
+        // ---- connected ----
+        if (!opts.connectedTypes.empty ()) {
+            bool anyConn = false;
+            for (API_ElemTypeID t : opts.connectedTypes) {
+                GS::Array<API_Guid> connectedElements;
+                if (ACAPI_Grouping_GetConnectedElements (guid, t, &connectedElements) != NoError) continue;
+                for (const API_Guid& toGuid : connectedElements) {
+                    nlohmann::ordered_json rel;
+                    rel["from_guid"] = guidStr;
+                    rel["to_guid"]   = APIGuidToString (toGuid).ToCStr ().Get ();
+                    rel["kind"]      = "connected_to";
+                    rel["via"]       = ElementTypeName (t);
+                    out["relations"].push_back (rel);
+                    anyConn = true;
+                }
+            }
+            if (anyConn) entity["metadata"]["aspects_loaded"].push_back ("connected");
+        }
+
+        // ---- mesh (только AC26 — на других версиях graceful stub) ----
+        if (opts.withMesh) {
+            std::vector<float>    vertices;
+            std::vector<uint32_t> triangles;
+            std::string           meshErr;
+            const bool ok = ExtractElementMesh (element.header, opts.applyTransform,
+                                                vertices, triangles, meshErr);
+            nlohmann::ordered_json mesh;
+            mesh["vertexCount"]   = static_cast<uint64_t> (vertices.size () / 3);
+            mesh["triangleCount"] = static_cast<uint64_t> (triangles.size () / 3);
+            mesh["vertices"]      = nlohmann::json::binary (FloatsToBytes (vertices));
+            mesh["triangles"]     = nlohmann::json::binary (UIntsToBytes (triangles));
+            mesh["error"]         = ok ? nlohmann::json (nullptr) : nlohmann::json (meshErr);
+            entity["mesh"] = mesh;
+            if (ok) entity["metadata"]["aspects_loaded"].push_back ("mesh");
+        }
+
+        out["entities"].push_back (entity);
+    }
+    return out;
+}
+
 }  // namespace
 
 BulkGetElementDataCommand::BulkGetElementDataCommand () :
