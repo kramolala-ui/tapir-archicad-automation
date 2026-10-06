@@ -1945,6 +1945,275 @@ GS::ObjectState BulkFindReplaceTextCommand::Execute (
 
 
 // ---------------------------------------------------------------------
+//  BulkCloneElementCommand
+// ---------------------------------------------------------------------
+//
+// Универсальный bulk-клон с одного донора. Не копирование выделенного
+// (для этого есть RotateElementsByAngle с withCopy), а «донор + N позиций».
+//
+// Зачем: клиент прочитал элемент-эталон через BulkGetElementData
+// (selected=true), выбрал донора, и хочет расставить N экземпляров с
+// заданными позициями/углами/параметрами. Не надо знать libPart, GDL —
+// всё наследуется от донора.
+//
+// v1: только Object (API_ObjectID). Wall/Slab/Door/Window — TODO (для
+// них посложнее: у Wall — endC + толщина + профиль, у Slab — контур).
+//
+// Вход (msgpack в payload_b64):
+//   { "source_guid": "<guid донора>",
+//     "instances": [
+//       { "pos_x":    361.7,          // обязательно (для Object)
+//         "pos_y":   -8.8,
+//         "level":    0.0,           // опц., default = level донора
+//         "angle":    0.0,           // опц., рад
+//         "story_index":  0,         // опц.
+//         "layer_index":  853,       // опц.
+//         "params_override": {"A": 2.0, "B": 4.0}  // опц.: GDL по имени
+//       }, ... ],
+//     "delete_source": false }
+//
+// Выход (msgpack):
+//   { "created_guids": ["...", ...],
+//     "errors": [{"index": 0, "msg": "..."}, ...] }
+
+BulkCloneElementCommand::BulkCloneElementCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkCloneElementCommand::GetName () const
+{
+    return "BulkCloneElement";
+}
+
+GS::Optional<GS::UniString> BulkCloneElementCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkCloneElementCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string" },
+            "created_count": { "type": "integer" },
+            "errors_count":  { "type": "integer" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+// Помощник: применить override из JSON к GDL-параметру p (по имени).
+// Возвращает true, если параметр найден и обновлён. Не пересоздаёт
+// значение с нуля: меняет только value.real или value.uStr — тип
+// сохраняется (Integer остаётся Integer, Length — Length и т.д.).
+static bool ApplyGdlOverride (API_AddParType& p, const nlohmann::json& v)
+{
+    switch (p.typeID) {
+        case APIParT_Integer:
+        case APIParT_Boolean:
+        case APIParT_PenCol:
+        case APIParT_LineTyp:
+        case APIParT_Mater:
+        case APIParT_FillPat:
+        case APIParT_BuildingMaterial:
+        case APIParT_Profile:
+        case APIParT_LightSw:
+            if (v.is_number_integer () || v.is_number_float ()) {
+                p.value.real = v.get<double> ();
+                return true;
+            }
+            if (v.is_boolean ()) {
+                p.value.real = v.get<bool> () ? 1.0 : 0.0;
+                return true;
+            }
+            return false;
+        case APIParT_RealNum:
+        case APIParT_Length:
+        case APIParT_Angle:
+        case APIParT_Intens:
+            if (v.is_number ()) {
+                p.value.real = v.get<double> ();
+                return true;
+            }
+            return false;
+        case APIParT_CString: {
+            if (!v.is_string ()) return false;
+            const std::string s = v.get<std::string> ();
+            const GS::UniString u (s.c_str ());
+            // value.uStr — UTF-16 буфер фиксированной длины.
+            // Копируем, не пересоздавая handle: BMhAllClear уже сделан
+            // при первом получении memo.
+            if (p.value.uStr != nullptr) {
+                GS::ucscpy (p.value.uStr, u.ToUStr ());
+                return true;
+            }
+            return false;
+        }
+        default:
+            return false;
+    }
+}
+
+GS::ObjectState BulkCloneElementCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    std::string sourceGuidStr;
+    std::vector<nlohmann::ordered_json> instances;
+    bool deleteSource = false;
+
+    try {
+        nlohmann::json j = nlohmann::json::from_msgpack (raw);
+        if (!j.contains ("source_guid") || !j.contains ("instances")) {
+            return CreateErrorResponse (APIERR_BADPARS,
+                "payload must contain 'source_guid' and 'instances'");
+        }
+        sourceGuidStr = j["source_guid"].get<std::string> ();
+        for (const auto& inst : j["instances"]) {
+            instances.push_back (inst);
+        }
+        if (j.contains ("delete_source")) deleteSource = j["delete_source"].get<bool> ();
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+
+    // Читаем донора.
+    API_Guid srcGuid = APIGuidFromString (sourceGuidStr.c_str ());
+    if (srcGuid == APINULLGuid) {
+        return CreateErrorResponse (APIERR_BADPARS, "source_guid is invalid");
+    }
+    API_Element srcElem = {};
+    srcElem.header.guid = srcGuid;
+    if (ACAPI_Element_Get (&srcElem) != NoError) {
+        return CreateErrorResponse (APIERR_GENERAL, "source element not found");
+    }
+
+    // v1: только Object.
+    const API_ElemTypeID srcType = GetElemTypeId (srcElem.header);
+    if (srcType != API_ObjectID) {
+        return CreateErrorResponse (APIERR_NOTSUPP,
+            "BulkCloneElement v1 supports only Object (source is not an Object)");
+    }
+
+    // Получаем полный memo донора (GDL + прочее). Держим на время всей операции.
+    API_ElementMemo srcMemo = {};
+    constexpr UInt64 kAllMemoMask =
+        APIMemoMask_All;
+    if (ACAPI_Element_GetMemo (srcGuid, &srcMemo, kAllMemoMask) != NoError) {
+        return CreateErrorResponse (APIERR_GENERAL, "failed to get source memo");
+    }
+    const GS::OnExit srcMemoGuard ([&srcMemo] () { ACAPI_DisposeElemMemoHdls (&srcMemo); });
+
+    nlohmann::ordered_json out;
+    out["created_guids"] = nlohmann::json::array ();
+    out["errors"] = nlohmann::json::array ();
+
+    // Один undo на весь батч.
+    ACAPI_CallUndoableCommand ("BulkCloneElement", [&] () -> GSErrCode {
+        for (size_t i = 0; i < instances.size (); ++i) {
+            const auto& inst = instances[i];
+            API_Element el = srcElem;             // структурная копия шапки + object-полей
+            el.header.guid = APINULLGuid;
+            el.header.modiStamp = 0;
+            el.header.groupGuid = APINULLGuid;
+
+            if (inst.contains ("story_index"))   el.header.floorInd = inst["story_index"].get<int> ();
+            if (inst.contains ("layer_index"))
+                el.header.layer = ACAPI_CreateAttributeIndex (inst["layer_index"].get<Int32> ());
+
+            if (inst.contains ("pos_x"))  el.object.pos.x = inst["pos_x"].get<double> ();
+            if (inst.contains ("pos_y"))  el.object.pos.y = inst["pos_y"].get<double> ();
+            if (inst.contains ("level"))  el.object.level = inst["level"].get<double> ();
+            if (inst.contains ("angle"))  el.object.angle = inst["angle"].get<double> ();
+
+            // Готовим memo: заново берём от донора (у каждого — свои handle'ы),
+            // затем применяем GDL-overrides.
+            API_ElementMemo memo = {};
+            if (ACAPI_Element_GetMemo (srcGuid, &memo, kAllMemoMask) != NoError) {
+                nlohmann::ordered_json e;
+                e["index"] = static_cast<int64_t> (i);
+                e["msg"] = "failed to get memo from source";
+                out["errors"].push_back (e);
+                ACAPI_DisposeElemMemoHdls (&memo);
+                continue;
+            }
+
+            if (inst.contains ("params_override") && memo.params != nullptr) {
+                const auto& ovr = inst["params_override"];
+                const GSSize nParams = BMGetHandleSize ((GSHandle) memo.params) / sizeof (API_AddParType);
+                for (GSIndex k = 0; k < nParams; ++k) {
+                    API_AddParType& p = (*memo.params)[k];
+                    const std::string pname (p.name);
+                    if (ovr.contains (pname)) {
+                        ApplyGdlOverride (p, ovr[pname]);
+                    }
+                }
+            }
+
+            GSErrCode createErr = ACAPI_Element_Create (&el, &memo);
+            if (createErr == NoError) {
+                out["created_guids"].push_back (
+                    APIGuidToString (el.header.guid).ToCStr ().Get ());
+            } else {
+                nlohmann::ordered_json e;
+                e["index"] = static_cast<int64_t> (i);
+                e["msg"]   = "ACAPI_Element_Create failed";
+                e["code"]  = static_cast<int64_t> (createErr);
+                out["errors"].push_back (e);
+            }
+            ACAPI_DisposeElemMemoHdls (&memo);
+        }
+
+        if (deleteSource) {
+            GS::Array<API_Guid> toDelete;
+            toDelete.Push (srcGuid);
+            ACAPI_Element_Delete (toDelete);
+        }
+        return NoError;
+    });
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 =
+        EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64", GS::UniString (outB64.c_str ()));
+    response.Add ("compression", GS::UniString (outCompression.c_str ()));
+    response.Add ("created_count", static_cast<Int64> (out["created_guids"].size ()));
+    response.Add ("errors_count",  static_cast<Int64> (out["errors"].size ()));
+    return response;
+}
+
+
+// ---------------------------------------------------------------------
 //  BulkGetGroupMembersCommand
 // ---------------------------------------------------------------------
 //
