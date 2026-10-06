@@ -2361,8 +2361,8 @@ GS::ObjectState BulkGetGroupMembersCommand::Execute (
 
         GS::Array<API_Guid> members;
         GSErrCode e = recursive
-            ? ACAPI_ElementGroup_GetAllGroupedElems (groupGuid, &members)
-            : ACAPI_ElementGroup_GetGroupedElems (groupGuid, &members);
+            ? ACAPI_Grouping_GetAllGroupedElems (groupGuid, &members)
+            : ACAPI_Grouping_GetGroupedElems (groupGuid, &members);
         if (e == NoError) {
             for (const API_Guid& m : members) {
                 g["member_guids"].push_back (APIGuidToString (m).ToCStr ().Get ());
