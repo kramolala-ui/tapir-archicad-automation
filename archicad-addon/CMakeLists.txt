@@ -81,6 +81,13 @@ FetchContent_MakeAvailable (msgpack_cxx)
 target_include_directories (AddOn SYSTEM PRIVATE
     ${msgpack_cxx_SOURCE_DIR}/include)
 
+# КРИТИЧНО: без MSGPACK_NO_BOOST msgpack/sysdep.hpp идёт в #else-ветку
+# и включает <boost/predef/other/endian.h>. С макросом берётся
+# вендоренный <msgpack/predef/other/endian.h> из самого репозитория —
+# Boost нам не нужен. См. include/msgpack/sysdep.hpp, блок
+# "#if defined(MSGPACK_NO_BOOST)".
+target_compile_definitions (AddOn PRIVATE MSGPACK_NO_BOOST)
+
 # Имя static-таргета в zstd менялось между версиями. Пробуем
 # несколько вариантов; если ни один не найден — печатаем список
 # всех доступных таргетов для диагностики.
