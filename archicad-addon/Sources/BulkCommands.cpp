@@ -2,6 +2,20 @@
 #include "MigrationHelper.hpp"
 #include "ElementCreationCommands.hpp"
 
+// ModelerAPI — для BulkGetElementMesh (см. AI_PRINCIPLES.md §2c, §10a).
+// Заголовки лежат в Support/Modules/GSModelDevLib и GSModeler. Модули
+// линкуются автоматически через LinkGSLibrariesToProject (Tools/CMakeCommon.cmake).
+#include "Model.hpp"
+#include "ModelElement.hpp"
+#include "ModelMeshBody.hpp"
+#include "Polygon.hpp"
+#include "ConvexPolygon.hpp"
+#include "Vertex.hpp"
+#include "exp.h"
+#include "Sight.hpp"
+#include "IAttributeReader.hpp"
+#include <unordered_map>
+
 #include <string>
 #include <vector>
 #include <map>
