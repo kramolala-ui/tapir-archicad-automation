@@ -1003,28 +1003,27 @@ GS::ObjectState BulkFindReplaceTextCommand::Execute (
         ACAPI_CallUndoableCommand ("BulkFindReplaceText", doWork);
     }
 
-    msgpack::sbuffer outBuf;
-    msgpack::packer<msgpack::sbuffer> pk (&outBuf);
-    pk.pack_map (7);
-    pk.pack (std::string ("find"));           pk.pack (findStr);
-    pk.pack (std::string ("replace"));        pk.pack (replaceStr);
-    pk.pack (std::string ("dry_run"));        pk.pack (dryRun);
-    pk.pack (std::string ("scanned_count"));  pk.pack (static_cast<uint64_t> (scannedCount));
-    pk.pack (std::string ("matched_count"));  pk.pack (static_cast<uint64_t> (matchedCount));
-    pk.pack (std::string ("replaced_count")); pk.pack (static_cast<uint64_t> (replacedCount));
-    pk.pack (std::string ("matches"));
-    pk.pack_array (matches.size ());
+    nlohmann::ordered_json out;
+    out["find"] = findStr;
+    out["replace"] = replaceStr;
+    out["dry_run"] = dryRun;
+    out["scanned_count"] = static_cast<uint64_t> (scannedCount);
+    out["matched_count"] = static_cast<uint64_t> (matchedCount);
+    out["replaced_count"] = static_cast<uint64_t> (replacedCount);
+    out["matches"] = nlohmann::json::array ();
     for (const Match& mm : matches) {
-        pk.pack_map (4);
-        pk.pack (std::string ("elementId")); pk.pack (mm.elementId);
-        pk.pack (std::string ("type"));      pk.pack (mm.type);
-        pk.pack (std::string ("before"));    pk.pack (mm.before);
-        pk.pack (std::string ("after"));     pk.pack (mm.after);
+        nlohmann::ordered_json m;
+        m["elementId"] = mm.elementId;
+        m["type"] = mm.type;
+        m["before"] = mm.before;
+        m["after"] = mm.after;
+        out["matches"].push_back (m);
     }
 
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
     std::string outCompression;
     const std::string outB64 =
-        EncodeEnvelope (outBuf.data (), outBuf.size (), outCompression);
+        EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
 
     GS::ObjectState response;
     response.Add ("payload_b64", GS::UniString (outB64.c_str ()));
