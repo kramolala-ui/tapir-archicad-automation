@@ -63,23 +63,23 @@ FetchContent_MakeAvailable (zstd)
 # Используем GIT_REPOSITORY+GIT_TAG, а не URL+URL_HASH: релизные tarball'ы
 # msgpack-cxx пересобираются (SHA256 меняется между прогонами), git-тег
 # стабилен. GIT_SHALLOW — тянем только коммит тега, без истории.
+#
+# SOURCE_SUBDIR=include — критично: у msgpack-cxx корневой CMakeLists.txt
+# требует Boost (FIND_PACKAGE(Boost)). Он нам НЕ нужен — библиотека
+# header-only, мы берём только include-пути. Указывая SOURCE_SUBDIR
+# на папку без CMakeLists.txt, заставляем FetchContent_MakeAvailable
+# только скачать исходник, не вызывая add_subdirectory.
 FetchContent_Declare (
     msgpack_cxx
     GIT_REPOSITORY https://github.com/msgpack/msgpack-c.git
     GIT_TAG        cpp-6.1.1
     GIT_SHALLOW    TRUE
+    SOURCE_SUBDIR  include
 )
 FetchContent_MakeAvailable (msgpack_cxx)
 
-if (TARGET msgpack-cxx)
-    target_link_libraries (AddOn msgpack-cxx)
-elseif (TARGET msgpackc-cxx)
-    target_link_libraries (AddOn msgpackc-cxx)
-else ()
-    # Fallback: только include-путь (msgpack-cxx — header-only)
-    target_include_directories (AddOn SYSTEM PRIVATE
-        ${msgpack_cxx_SOURCE_DIR}/include)
-endif ()
+target_include_directories (AddOn SYSTEM PRIVATE
+    ${msgpack_cxx_SOURCE_DIR}/include)
 
 # Имя static-таргета в zstd менялось между версиями. Пробуем
 # несколько вариантов; если ни один не найден — печатаем список
