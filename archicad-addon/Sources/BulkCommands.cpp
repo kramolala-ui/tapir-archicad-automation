@@ -3201,11 +3201,31 @@ GS::ObjectState BulkSetElementDataCommand::Execute (
                     case SetKeyKind::Text:
                         srcOut["ignored_not_implemented"].push_back (key);
                         break;
-                    case SetKeyKind::Gdl:
+                    case SetKeyKind::Gdl: {
+                        GdlChange c;
+                        c.name  = key.substr (4);
+                        c.value = val;
+                        gdlChanges.push_back (c);
+                    } break;
                     case SetKeyKind::Archicad:
-                    case SetKeyKind::Class:
                         srcOut["ignored_not_implemented"].push_back (key);
                         break;
+                    case SetKeyKind::Class: {
+                        const std::string sysStr = key.substr (6);
+                        const API_Guid sg = APIGuidFromString (sysStr.c_str ());
+                        const API_Guid ig = val.is_string ()
+                            ? APIGuidFromString (val.get<std::string> ().c_str ())
+                            : APINULLGuid;
+                        if (sg == APINULLGuid || ig == APINULLGuid) {
+                            nlohmann::ordered_json e; e["key"] = key;
+                            e["msg"] = "expected '<item-guid>' value and valid system-guid in key";
+                            srcOut["errors"].push_back (e); ++errorsCount; break;
+                        }
+                        ClassChange cc;
+                        cc.systemGuid = sg;
+                        cc.itemGuid   = ig;
+                        classChanges.push_back (cc);
+                    } break;
                     case SetKeyKind::ReadOnly:
                         srcOut["ignored_readonly"].push_back (key);
                         break;
