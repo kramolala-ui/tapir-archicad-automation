@@ -3242,9 +3242,19 @@ GS::ObjectState BulkSetElementDataCommand::Execute (
                         c.value = val;
                         gdlChanges.push_back (c);
                     } break;
-                    case SetKeyKind::Archicad:
-                        srcOut["ignored_not_implemented"].push_back (key);
-                        break;
+                    case SetKeyKind::Archicad: {
+                        const std::string guidStr = key.substr (9);
+                        const API_Guid pg = APIGuidFromString (guidStr.c_str ());
+                        if (pg == APINULLGuid || !val.is_string ()) {
+                            nlohmann::ordered_json e; e["key"] = key;
+                            e["msg"] = "expected string value and valid property guid in key";
+                            srcOut["errors"].push_back (e); ++errorsCount; break;
+                        }
+                        PropertyChange pc;
+                        pc.propertyGuid = pg;
+                        pc.valueString  = val.get<std::string> ();
+                        propChanges.push_back (pc);
+                    } break;
                     case SetKeyKind::Class: {
                         const std::string sysStr = key.substr (6);
                         const API_Guid sg = APIGuidFromString (sysStr.c_str ());
