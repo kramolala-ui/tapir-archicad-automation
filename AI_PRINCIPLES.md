@@ -1438,6 +1438,89 @@ on this Archicad version (only AC26 for now)"` — сборка зелёная,
     (не только текущего вида). Работает для API_TextID, API_LabelID
     и любого другого elem type.
 
+### Bridge: ложный HTTP 500 на PUT → дубликаты кода (2026-10-06)
+
+**Симптом:** после серии AI_CHANGES файл `BulkCommands.cpp` содержит
+**три копии** одной функции `BulkCloneElementCommand::Execute` (и
+столько же `ApplyGdlOverride`). Компилятор при этом молчит (файл
+валиден синтаксически), но на линковке — `multiply defined symbol`.
+
+**Корень:** GitHub Contents API на `PUT /repos/.../contents/<path>`
+периодически отдаёт **HTTP 500** — но **сам PUT уже применён на
+сервере**. Bridge обрабатывал 500 как «операция не прошла» → писал
+`ОТКАЧЕНО` → пользователь (или LLM) посылал тот же блок заново →
+Bridge дописывал содержимое второй раз → через три попытки — три
+копии. Три копии BulkCloneElement в `BulkCommands.cpp` — прямое
+следствие этого.
+
+**Фикс (две части, обе в `agent_tools/response_handler.py`):**
+
+1. **`_verify_github_write`** — после ошибки PUT делаем `GET` файла
+   и сравниваем содержимое с ожидаемым. Если совпало (с точностью
+   до `\r\n` / финального `\n`) — PUT **прошёл**, ошибка была
+   только в ответе. Возвращаем `ok=True, verified_after_error=True`.
+
+2. **Честный отчёт в `apply_changes`** — вместо единого
+   `applied / failed` теперь раздельно:
+
+       applied_local       — сколько локальных правок применилось
+       applied_github      — сколько github://-правок применилось
+       failed_local        — сколько локальных упало
+       failed_github       — сколько github://-правок упало
+       github_not_rolled_back : bool
+                           — флаг «были github-правки, они на
+                             сервере и НЕ откатываются»
+
+   Текст `error` больше **не пишет** «все изменения возвращены»,
+   если в пакете были github://-правки: `version_manager` работает
+   только с локальной ФС и GitHub не трогает. Сообщение честное:
+   «локальные откачены, github-правки уже на сервере и не
+   откатываются».
+
+**Следствие для LLM:** при ошибке пакета **не ретраить слепо весь
+блок** — сначала посмотреть `applied_github`, `failed_github` и
+`verified_after_error`. Если операция на самом деле прошла, повтор
+создаст дубликаты.
+
+### Bridge: таблица лимитов «было → стало» (2026-10-06)
+
+Все hardcoded обрезки убраны в параметры запроса (`agent_tools/request_handler.py`):
+
+    Параметр              Было        Стало (default)   Максимум
+    -----------------------------------------------------------------
+    max_files             20          200               10_000
+    max_total_bytes       2 MB        20 MB             500 MB
+    max_limit             2_000       20_000            200_000
+    max_line_chars        400 / 300   2_000             100_000
+    max_ops (batch)       10          50                1_000
+
+**Как переопределять:** прямо в запросе — `{"max_line_chars": 50000}`
+в корне `===AI_REQUEST===` (для read/search) или в `batch` (для ops).
+
+**Сигналы обрезки:**
+- В `read` / `search` — у каждой строки флаг `line_truncated: bool`.
+- В `batch` — поле `truncated: bool` в ответе.
+- Раньше молча резалось: длинные register_command с description
+  приезжали обрезанными, и якоря `replace` не совпадали.
+
+**Причина переделки:** десятки ошибок «old fragment not found» при
+работе с AddOnMain.cpp были следствием молчаливой обрезки длинных
+строк; LLM жёг токены на повторные чтения и дописывания.
+
+### Python-обёртки в IFC_analyzer (в процессе)
+
+`plugins/archicad_plugin/bulk_connection.py`:
+
+    get_element_data(elements, selected, with_group_info,
+                     with_group_members, ...)
+    get_element_mesh(elements, ensure_3d_window=True)
+
+**TODO** (следующий патч):
+
+    get_selection()        # shortcut к selected=True
+    get_group_members()    # обёртка над BulkGetGroupMembers
+    bulk_clone_element()   # обёртка над BulkCloneElement
+
 ---
 
 ## 11. Контакты и ссылки
