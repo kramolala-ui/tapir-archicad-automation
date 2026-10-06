@@ -798,9 +798,9 @@ GS::ObjectState BulkSetTextsCommand::Execute (
             }
             const GS::UniString text (row.text.c_str ());
             GSErrCode e = NoError;
-            if (element.header.typeID == API_TextID) {
+            if (GetElemTypeId (element.header) == API_TextID) {
                 e = ApplyTextToElement (element, text, false);
-            } else if (element.header.typeID == API_LabelID &&
+            } else if (GetElemTypeId (element.header) == API_LabelID &&
                        element.label.labelClass == APILblClass_Text) {
                 e = ApplyTextToElement (element, text, true);
             } else {
