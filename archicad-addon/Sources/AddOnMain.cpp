@@ -1369,6 +1369,10 @@ GSErrCode Initialize (void)
             bulkCommands, "0.1.0",
             "Bulk-move elements by delta vector in one Execute. Input payload: {moves: [{source_guid, dx, dy, dz, copy?: bool=false}]}. Output payload: {per_source: [{source_guid, moved, error}], moved_count, errors_count}. One undo barrier for the whole batch."
         );
+        err |= RegisterCommand<BulkRotateElementsCommand> (
+            bulkCommands, "0.1.0",
+            "Bulk-rotate elements by angle (radians) around center in one Execute. Input payload: {rotations: [{source_guid, angle_rad, center_x?, center_y?, copy?: bool=false}]}. If center not given, uses element's AABB center. Output payload: {per_source: [{source_guid, rotated, error}], rotated_count, errors_count}. One undo barrier for the whole batch."
+        );
         AddCommandGroup (bulkCommands);
     }
 
