@@ -248,27 +248,31 @@ GSErrCode ApplyTextToElement (API_Element& element,
                               bool isLabel)
 {
     API_Element mask = {};
+    ACAPI_ELEMENT_MASK_CLEAR (mask);
     API_ElementMemo clipMemo = {};
     if (isLabel) {
         SetTextContentAndParagraphs (clipMemo, element.label.u.text, text);
         ACAPI_ELEMENT_MASK_SET (mask, API_LabelType, u.text.nLine);
         ACAPI_ELEMENT_MASK_SET (mask, API_LabelType, u.text.useEolPos);
+#ifndef ServerMainVers_2800
+        // Порядок как в upstream (ElementCommands.cpp SetDetailsOfElements):
+        // charCode идёт сразу после useEolPos, ДО nonBreaking/width/height.
+        // На AC26 другой порядок маски даёт -2130313112 при Change.
+        ACAPI_ELEMENT_MASK_SET (mask, API_LabelType, u.text.charCode);
+#endif
         ACAPI_ELEMENT_MASK_SET (mask, API_LabelType, u.text.nonBreaking);
         ACAPI_ELEMENT_MASK_SET (mask, API_LabelType, u.text.width);
         ACAPI_ELEMENT_MASK_SET (mask, API_LabelType, u.text.height);
-#ifndef ServerMainVers_2800
-        ACAPI_ELEMENT_MASK_SET (mask, API_LabelType, u.text.charCode);
-#endif
     } else {
         SetTextContentAndParagraphs (clipMemo, element.text, text);
         ACAPI_ELEMENT_MASK_SET (mask, API_TextType, nLine);
         ACAPI_ELEMENT_MASK_SET (mask, API_TextType, useEolPos);
-        ACAPI_ELEMENT_MASK_SET (mask, API_TextType, nonBreaking);
-        ACAPI_ELEMENT_MASK_SET (mask, API_TextType, width);
-        ACAPI_ELEMENT_MASK_SET (mask, API_TextType, height);
 #ifndef ServerMainVers_2800
         ACAPI_ELEMENT_MASK_SET (mask, API_TextType, charCode);
 #endif
+        ACAPI_ELEMENT_MASK_SET (mask, API_TextType, nonBreaking);
+        ACAPI_ELEMENT_MASK_SET (mask, API_TextType, width);
+        ACAPI_ELEMENT_MASK_SET (mask, API_TextType, height);
     }
     const GSErrCode err = ACAPI_Element_Change (&element, &mask, &clipMemo,
         APIMemoMask_TextContent | APIMemoMask_Paragraph, true);
