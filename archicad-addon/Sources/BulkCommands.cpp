@@ -2748,6 +2748,26 @@ GS::ObjectState BulkGetGroupMembersCommand::Execute (
         expandGroup (gg, "group", groupGuid);
     }
 
+    // 3. with_data=true: тянем полные данные для всех уникальных member_guids.
+    //    Дедуплицируем по гуиду (один элемент может быть в нескольких группах).
+    if (withData) {
+        std::set<std::string> seenMembers;
+        std::vector<std::string> allMembers;
+        for (const auto& g : out["groups"]) {
+            if (!g.contains ("member_guids")) continue;
+            for (const auto& mg : g["member_guids"]) {
+                const std::string s = mg.get<std::string> ();
+                if (seenMembers.insert (s).second) allMembers.push_back (s);
+            }
+        }
+
+        dataOpts.elemGuids = std::move (allMembers);
+
+        nlohmann::ordered_json ed = CollectElementData (dataOpts);
+        out["entities"]  = std::move (ed["entities"]);
+        out["relations"] = std::move (ed["relations"]);
+    }
+
     std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
     std::string outCompression;
     const std::string outB64 =
@@ -2758,6 +2778,8 @@ GS::ObjectState BulkGetGroupMembersCommand::Execute (
     response.Add ("compression", GS::UniString (outCompression.c_str ()));
     response.Add ("elements_count", static_cast<Int64> (elementGuids.size ()));
     response.Add ("groups_count", static_cast<Int64> (out["groups"].size ()));
+    response.Add ("entities_count", static_cast<Int64> (out.contains ("entities") ? out["entities"].size () : 0));
+    response.Add ("relations_count", static_cast<Int64> (out.contains ("relations") ? out["relations"].size () : 0));
     return response;
 }
 
