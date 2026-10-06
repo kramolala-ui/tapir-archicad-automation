@@ -387,9 +387,12 @@ C++:
 | 6 | `BulkSetTexts` | **✓ работает** (2026-10-06, undo-barrier) |
 | 7 | `BulkFindReplaceText` | **✓ работает** (2026-10-06, dry_run без undo) |
 | 8 | `BulkGetElementData` V2 | **✓ работает** (2026-10-06, details/bbox/props/GDL/class/relations) |
-| 9 | `BulkGetElementMesh` | **✓ реализовано** (2026-10-06, ModelerAPI через 3D-Sight) |
-| 10 | Пакетный ACAPI (см. 4a) | TODO |
-| 11 | Остальные bulk-команды | TODO |
+| 9 | `BulkGetElementMesh` | **⚠ только AC26** (ModelerAPI; на 25/27+ возвращает stub-error) |
+| 10 | `BulkGetGroupMembers` | **✓ работает** (нативные группы Ctrl+G, рекурсивно) |
+| 11 | `BulkCloneElement` | **⚠ в сборке** (hpp есть, cpp/AddOnMain досыпаются) |
+| 12 | Bridge: настраиваемые лимиты | **✓ работает** (read/search/batch — не молча режут) |
+| 13 | Пакетный ACAPI (см. 4a) | TODO |
+| 14 | Остальные bulk-команды | TODO |
 
 **Замечание про msgpack:** изначально планировался `msgpack-cxx` — но
 он падает на MSVC с C2766 (см. раздел 5). На проводе **тот же формат
