@@ -816,6 +816,284 @@ GS::ObjectState BulkSetTextsCommand::Execute (
 
 
 // ---------------------------------------------------------------------
+//  BulkGetElementMeshCommand
+// ---------------------------------------------------------------------
+//
+// Вход (msgpack в payload_b64):
+//   { "elements":       ["guid", ...],
+//     "apply_transform": true }
+//
+// Выход (msgpack в payload_b64):
+//   { "rows": [
+//       { "elementId":     "guid",
+//         "vertexCount":   N,
+//         "triangleCount": M,
+//         "vertices":      <binary float32 LE, xyz xyz ...>,
+//         "triangles":     <binary uint32  LE, ijk ijk ...>,
+//         "error":         null | "Get3DInfo failed" | "no solid body" },
+//       ... ] }
+//
+// Внутри — обход 3D-компонент по образцу AccumulateSolidBodyBounds
+// (ElementCommands.cpp:4127): ACAPI_ModelAccess_Get3DInfo даёт диапазон
+// тел [fbody..lbody], ACAPI_ModelAccess_GetComponent(API_BodyID) —
+// каждое тело. Тело ссылается на диапазоны вершин/рёбер/полигонов
+// через body.fvert..lvert, body.fpedg..lpedg, body.fpgon..lpgon,
+// каждый из которых читается отдельным GetComponent с нужным
+// typeID (API_VertID / API_PedgID / API_PgonID). Триангуляция —
+// fan (v0,vi,vi+1) для простых полигонов без дырок.
+
+namespace {
+
+// Применяет 4x3 трансформацию body.tranmat к точке (x,y,z).
+// Индексация tmx[] — как в AddMorphBodyFromMemo (ExtendedElementCommands.cpp:3175).
+void ApplyTranmat (const API_Tranmat& t, double& x, double& y, double& z)
+{
+    const double nx = t.tmx[0]*x + t.tmx[4]*y + t.tmx[8]*z  + t.tmx[3];
+    const double ny = t.tmx[1]*x + t.tmx[5]*y + t.tmx[9]*z  + t.tmx[7];
+    const double nz = t.tmx[2]*x + t.tmx[6]*y + t.tmx[10]*z + t.tmx[11];
+    x = nx; y = ny; z = nz;
+}
+
+// Извлекает mesh одного элемента. Возвращает false + errOut — если
+// ACAPI не дал информацию или тело пустое.
+bool ExtractElementMesh (const API_Elem_Head& elemHead,
+                         bool applyTransform,
+                         std::vector<float>& outVertices,
+                         std::vector<uint32_t>& outTriangles,
+                         std::string& errOut)
+{
+    API_ElemInfo3D info3D = {};
+    if (ACAPI_ModelAccess_Get3DInfo (elemHead, &info3D) != NoError) {
+        errOut = "Get3DInfo failed";
+        return false;
+    }
+
+    bool anySolidBody = false;
+
+    for (Int32 iBody = info3D.fbody; iBody <= info3D.lbody; ++iBody) {
+        API_Component3D bodyComp = {};
+        bodyComp.header.typeID = API_BodyID;
+        bodyComp.header.index  = iBody;
+        if (ACAPI_ModelAccess_GetComponent (&bodyComp) != NoError) continue;
+        if (bodyComp.body.nPgon == 0) continue;  // wire-only, skip
+
+        anySolidBody = true;
+
+        // Маппинг: "глобальный индекс ACAPI" -> "индекс в outVertices/3"
+        std::map<Int32, uint32_t> vertRemap;
+
+        // ---- 1. Вершины ----
+        for (Int32 iVert = bodyComp.body.fvert; iVert <= bodyComp.body.lvert; ++iVert) {
+            API_Component3D vertComp = {};
+            vertComp.header.typeID = API_VertID;
+            vertComp.header.index  = iVert;
+            if (ACAPI_ModelAccess_GetComponent (&vertComp) != NoError) continue;
+
+            double x = vertComp.vert.x;
+            double y = vertComp.vert.y;
+            double z = vertComp.vert.z;
+            if (applyTransform) ApplyTranmat (bodyComp.body.tranmat, x, y, z);
+
+            vertRemap[iVert] = static_cast<uint32_t> (outVertices.size () / 3);
+            outVertices.push_back (static_cast<float> (x));
+            outVertices.push_back (static_cast<float> (y));
+            outVertices.push_back (static_cast<float> (z));
+        }
+
+        // ---- 2. Полигоны -> треугольники (fan-триангуляция) ----
+        for (Int32 iPgon = bodyComp.body.fpgon; iPgon <= bodyComp.body.lpgon; ++iPgon) {
+            API_Component3D pgonComp = {};
+            pgonComp.header.typeID = API_PgonID;
+            pgonComp.header.index  = iPgon;
+            if (ACAPI_ModelAccess_GetComponent (&pgonComp) != NoError) continue;
+
+            // Цепочка вершин полигона: для каждого ребра берём его vert1.
+            // Обход идёт по контуру, последнее ребро замкнёт цепочку на первую.
+            std::vector<Int32> chain;
+            for (Int32 iPEdg = pgonComp.pgon.fpedg; iPEdg <= pgonComp.pgon.lpedg; ++iPEdg) {
+                API_Component3D pedgComp = {};
+                pedgComp.header.typeID = API_PEdgID;
+                pedgComp.header.index  = iPEdg;
+                if (ACAPI_ModelAccess_GetComponent (&pedgComp) != NoError) continue;
+                chain.push_back (pedgComp.pedg.vert1);
+            }
+            if (chain.size () < 3) continue;
+
+            // Fan: (chain[0], chain[k], chain[k+1]) для k=1..size-2
+            for (size_t k = 1; k + 1 < chain.size (); ++k) {
+                auto itA = vertRemap.find (chain[0]);
+                auto itB = vertRemap.find (chain[k]);
+                auto itC = vertRemap.find (chain[k + 1]);
+                if (itA == vertRemap.end () || itB == vertRemap.end () || itC == vertRemap.end ()) continue;
+                outTriangles.push_back (itA->second);
+                outTriangles.push_back (itB->second);
+                outTriangles.push_back (itC->second);
+            }
+        }
+    }
+
+    if (!anySolidBody) {
+        errOut = "no solid body";
+        return false;
+    }
+    return true;
+}
+
+// Плоский массив float32/uint32 -> байтовый вектор little-endian.
+std::vector<uint8_t> FloatsToBytes (const std::vector<float>& v)
+{
+    std::vector<uint8_t> out (v.size () * sizeof (float));
+    if (!v.empty ()) std::memcpy (out.data (), v.data (), out.size ());
+    return out;
+}
+std::vector<uint8_t> UIntsToBytes (const std::vector<uint32_t>& v)
+{
+    std::vector<uint8_t> out (v.size () * sizeof (uint32_t));
+    if (!v.empty ()) std::memcpy (out.data (), v.data (), out.size ());
+    return out;
+}
+
+}  // namespace
+
+BulkGetElementMeshCommand::BulkGetElementMeshCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkGetElementMeshCommand::GetName () const
+{
+    return "BulkGetElementMesh";
+}
+
+GS::Optional<GS::UniString> BulkGetElementMeshCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkGetElementMeshCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string" },
+            "elements_count": { "type": "integer" },
+            "with_mesh_count": { "type": "integer" },
+            "total_triangles": { "type": "integer" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkGetElementMeshCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    std::vector<std::string> elemGuids;
+    bool applyTransform = true;
+    try {
+        nlohmann::json j = nlohmann::json::from_msgpack (raw);
+        if (!j.contains ("elements")) {
+            return CreateErrorResponse (APIERR_BADPARS,
+                "payload must contain 'elements'");
+        }
+        for (const auto& s : j["elements"]) elemGuids.push_back (s.get<std::string> ());
+        if (j.contains ("apply_transform")) applyTransform = j["apply_transform"].get<bool> ();
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+
+    nlohmann::ordered_json out;
+    out["rows"] = nlohmann::json::array ();
+    size_t withMeshCount = 0;
+    size_t totalTriangles = 0;
+
+    for (const std::string& guidStr : elemGuids) {
+        nlohmann::ordered_json row;
+        row["elementId"] = guidStr;
+
+        API_Guid guid = APIGuidFromString (guidStr.c_str ());
+        if (guid == APINULLGuid) {
+            row["vertexCount"] = 0;
+            row["triangleCount"] = 0;
+            row["vertices"] = nlohmann::json::binary (std::vector<uint8_t> {});
+            row["triangles"] = nlohmann::json::binary (std::vector<uint8_t> {});
+            row["error"] = "invalid guid";
+            out["rows"].push_back (row);
+            continue;
+        }
+
+        API_Element element = {};
+        element.header.guid = guid;
+        if (ACAPI_Element_Get (&element) != NoError) {
+            row["vertexCount"] = 0;
+            row["triangleCount"] = 0;
+            row["vertices"] = nlohmann::json::binary (std::vector<uint8_t> {});
+            row["triangles"] = nlohmann::json::binary (std::vector<uint8_t> {});
+            row["error"] = "element not found";
+            out["rows"].push_back (row);
+            continue;
+        }
+
+        std::vector<float> vertices;
+        std::vector<uint32_t> triangles;
+        std::string meshErr;
+        const bool ok = ExtractElementMesh (element.header, applyTransform,
+                                            vertices, triangles, meshErr);
+
+        if (ok) {
+            ++withMeshCount;
+            totalTriangles += triangles.size () / 3;
+        }
+
+        row["vertexCount"]   = static_cast<uint64_t> (vertices.size () / 3);
+        row["triangleCount"] = static_cast<uint64_t> (triangles.size () / 3);
+        row["vertices"]      = nlohmann::json::binary (FloatsToBytes (vertices));
+        row["triangles"]     = nlohmann::json::binary (UIntsToBytes (triangles));
+        row["error"]         = ok ? nlohmann::json (nullptr) : nlohmann::json (meshErr);
+        out["rows"].push_back (row);
+    }
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 =
+        EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64", GS::UniString (outB64.c_str ()));
+    response.Add ("compression", GS::UniString (outCompression.c_str ()));
+    response.Add ("elements_count", static_cast<Int64> (elemGuids.size ()));
+    response.Add ("with_mesh_count", static_cast<Int64> (withMeshCount));
+    response.Add ("total_triangles", static_cast<Int64> (totalTriangles));
+    return response;
+}
+
+
+// ---------------------------------------------------------------------
 //  BulkFindReplaceTextCommand
 // ---------------------------------------------------------------------
 //
