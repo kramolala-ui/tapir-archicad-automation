@@ -606,11 +606,8 @@ GS::ObjectState BulkGetTextsCommand::Execute (
         return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
     }
 
-    msgpack::sbuffer outBuf;
-    msgpack::packer<msgpack::sbuffer> pk (&outBuf);
-    pk.pack_map (1);
-    pk.pack (std::string ("rows"));
-    pk.pack_array (elemGuids.size ());
+    nlohmann::ordered_json out;
+    out["rows"] = nlohmann::json::array ();
 
     size_t foundCount = 0;
     for (const std::string& guidStr : elemGuids) {
