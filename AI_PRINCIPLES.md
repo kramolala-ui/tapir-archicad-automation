@@ -369,7 +369,18 @@ fallback `zstd_static` / `libzstd` / `zstd`.
 
 ---
 
-## 4d. План Bulk.GetPropertyValues (TODO)
+## 4d. Bulk-команды (2026-10-06 — реализовано)
+
+Пять команд собраны в `archicad-addon/Sources/BulkCommands.hpp/.cpp`,
+зарегистрированы в `AddOnMain.cpp` (группа `bulkCommands`):
+
+| Команда | Назначение |
+|---|---|
+| `BulkPing` | Транспортный тест: base64 + опц. zstd |
+| `BulkGetPropertyValues` | N×K свойств (чанки по 20, ниже порога K=24) |
+| `BulkGetTexts` | Тексты Text/Label (read-only) |
+| `BulkSetTexts` | Запись текста (один undo на батч) |
+| `BulkFindReplaceText` | Глобальный find/replace, `dry_run` |
 
 **Цель:** получить N×K свойств одним `Execute` — обойти JSON-стену и
 проблему зависания серий (раздел 5, «КРИТИЧНО»).
