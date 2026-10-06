@@ -1336,39 +1336,63 @@ Archicad через `ACAPI_ElementGroup_GetGroup` (element → parent) и
 
 Исходник — `archicad-addon/Sources/BulkCommands.hpp/.cpp`.
 
-### BulkGetElementMesh — stub
+### BulkGetElementMesh — работает, но только на AC26
 
-Попытка через `ACAPI_3D_GetComponent` **не удалась**: у
-`API_BodyType` нет диапазонов вершин/полигонов (только счётчики
-nVert / nPgon / nEdge / nPedg / nVect и bbox). Полей
-`fvert / lvert / fpgon / lpgon` нет ни в одном заголовке DevKit
-(проверено поиском по `Inc/`).
+**Что пробовали и почему не вышло.** Через `ACAPI_3D_GetComponent`
+mesh получить нельзя: у `API_BodyType` только счётчики (nVert / nPgon /
+nEdge / nPedg / nVect) и bbox, но **нет** диапазонов индексов
+(`fvert / lvert / fpgon / lpgon` — таких полей в DevKit нет).
 
-**Рабочий путь (открыт, но не реализован):**
+**Что работает (реализовано).** ModelerAPI через Sight:
 
     1. ACAPI_3D_GetCurrentWindowSight(void** sightPtr)
-       — даёт Sight текущего 3D-окна. Доступно из ОБЫЧНОЙ
-       команды (не только в File→Save As handler — ключевое
-       открытие).
-    2. EXPGetModel(sight, &ModelerAPI::Model, attrReader)
-       — строит Model.
-    3. ModelerAPI::Element::GetTessellatedBody(iBody, &MeshBody)
-       — даёт mesh: MeshBody.GetVertexCount(), GetPolygon(i, &P),
-       P.GetConvexPolygon(i, &CP), CP.GetVertexIndex(i),
-       body.GetVertex(idx, &v) → v.x/y/z.
+       — Sight активного 3D-окна. Требует ОТКРЫТОГО 3D-вида.
+    2. void* → Modeler::SightPtr:
+           auto* p = static_cast<Modeler::SightPtr*>(sightRaw);
+           Modeler::SightPtr sight = *p;
+    3. GS::Owner<Modeler::IAttributeReader> attrReader (
+           ACAPI_Attribute_GetCurrentAttributeSetReader ());
+       ModelerAPI::Model model;
+       EXPGetModel (sight, &model, attrReader.Get ());
+    4. Обход (все индексы 1-based):
+           for iElem=1..GetElementCount()
+             model.GetElement(iElem, &element)
+             if element.GetElemGuid() != target: continue
+             for iBody=1..element.GetTessellatedBodyCount()
+               element.GetTessellatedBody(iBody, &body)
+               for iPgon=1..body.GetPolygonCount()
+                 body.GetPolygon(iPgon, &polygon)
+                 for iCvx=1..polygon.GetConvexPolygonCount()
+                   polygon.GetConvexPolygon(iCvx, &convex)
+                   for iPedge=1..convex.GetVertexCount()
+                     idx = convex.GetVertexIndex(iPedge)
+                     body.GetVertex(idx, &vertex) → x/y/z
 
-**Ограничение:** нужен ОТКРЫТЫЙ 3D-вид в Archicad. Из FloorPlan
-Sight не получить.
+**Дедупликация вершин обязательна.** Одна вершина в нескольких
+полигонах. Без remap — дубликаты и кривые нормали. Ключ:
+`(bodyIdx << 32) | localVertexIndex`. Fan-триангуляция:
+`(v0, vi, vi+1)` для `i=1..n-2`. **Индексы для mesh — 0-based**
+(стандарт GL / VTK / ifcopenshell).
 
-**Альтернатива — IFC как транспорт:**
+**⚠ Компилируется только на AC26.** На AC25 / 27 / 28 / 29
+`ACAPI_3D_GetCurrentWindowSight` НЕ объявлена (error C3861), а на AC29
+вдобавок `Model.hpp` ломает `GDL/PropertyListImp.hpp` (каскад
+C2039/C3083). Весь mesh-код обёрнут в `#if defined (ServerMainVers_2600)`.
+На остальных версиях команда возвращает `errOut = "mesh not supported
+on this Archicad version (only AC26 for now)"` — сборка зелёная,
+команда регистрируется, но данных нет.
 
-    1. TapirConnection.export_filtered_ifc(guids=[...])
-       — только выбранные элементы (уже есть в Tapir).
-    2. ifcopenshell.geom.create_shape() — читает mesh из IFC.
-    3. Матчинг IFC GlobalID ↔ Archicad GUID через archicad_sync.
+**Version-aware путь для 27+** — TODO. Известные зацепки:
+- Вторая перегрузка `EXPGetModel(ConstModel3DPtr, ...)` не требует
+  SightPtr, но нужен источник `ConstModel3DPtr` без 3D-окна — не
+  найден через `ACAPI_*`.
+- Возможно, в AC27+ `ACAPI_3D_GetCurrentWindowSight` переехала в
+  другой заголовок или переименована. Проверить на DevKit 27.
 
-Плюс: работает сразу, ifcopenshell надёжен.
-Минус: экспорт + round-trip через файл (секунды на 100 элементов).
+**Резервный путь — IFC-транспорт** (если 3D-окна нет или версия ≠ 26):
+`export_filtered_ifc(guids)` → `ifcopenshell.geom.create_shape()` →
+матчинг IFC GlobalID ↔ Archicad GUID через `archicad_sync`. Не
+реализовано, но путь открыт.
 
 ### Ключевые API-факты (для будущих команд)
 
