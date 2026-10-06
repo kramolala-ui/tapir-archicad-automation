@@ -450,33 +450,26 @@ GS::ObjectState BulkGetPropertyValuesCommand::Execute (
 
     // ---- 2. Пройти по элементам × чанкам свойств ----
     // Структура: rows[i] — map elementId → list of (propertyId, value)
-    msgpack::sbuffer outBuf;
-    msgpack::packer<msgpack::sbuffer> pk (&outBuf);
-
-    pk.pack_map (1);
-    pk.pack (std::string ("rows"));
-    pk.pack_array (N);
+    nlohmann::ordered_json out;
+    out["rows"] = nlohmann::json::array ();
 
     size_t valuesCount = 0;
 
     for (size_t i = 0; i < N; ++i) {
-        // --- row i ---
-        pk.pack_map (2);
-        pk.pack (std::string ("elementId"));
-        pk.pack (elemGuids[i]);
-        pk.pack (std::string ("propertyValues"));
-        pk.pack_array (K);
+        nlohmann::ordered_json row;
+        row["elementId"] = elemGuids[i];
+        row["propertyValues"] = nlohmann::json::array ();
 
         API_Guid elemGuid = APIGuidFromString (elemGuids[i].c_str ());
         if (elemGuid == APINULLGuid) {
             // Пустой гуид — вернём K пустых записей
             for (size_t k = 0; k < K; ++k) {
-                pk.pack_map (2);
-                pk.pack (std::string ("propertyId"));
-                pk.pack (propGuids[k]);
-                pk.pack (std::string ("value"));
-                pk.pack (std::string (""));
+                nlohmann::ordered_json pv;
+                pv["propertyId"] = propGuids[k];
+                pv["value"] = "";
+                row["propertyValues"].push_back (pv);
             }
+            out["rows"].push_back (row);
             continue;
         }
 
