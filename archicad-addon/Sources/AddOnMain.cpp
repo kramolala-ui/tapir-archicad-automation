@@ -1333,6 +1333,10 @@ GSErrCode Initialize (void)
             bulkCommands, "1.1.0",
             "Test command: base64-decode payload (optionally zstd-decompress), return size and hex preview. Validates the binary transport path before adding msgpack."
         );
+        err |= RegisterCommand<BulkGetPropertyValuesCommand> (
+            bulkCommands, "1.0.0",
+            "Bulk read of property values for many elements at once via msgpack+zstd. Input payload carries {elements: [guids], properties: [guids]}; output carries {rows: [{elementId, propertyValues}]}. One Execute, no JSON-wall, no unstable series of per-chunk calls."
+        );
         AddCommandGroup (bulkCommands);
     }
 
