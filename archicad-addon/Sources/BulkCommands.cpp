@@ -780,22 +780,21 @@ GS::ObjectState BulkSetTextsCommand::Execute (
         return NoError;
     });
 
-    msgpack::sbuffer outBuf;
-    msgpack::packer<msgpack::sbuffer> pk (&outBuf);
-    pk.pack_map (3);
-    pk.pack (std::string ("updated")); pk.pack (static_cast<uint64_t> (updatedCount));
-    pk.pack (std::string ("total"));   pk.pack (static_cast<uint64_t> (rows.size ()));
-    pk.pack (std::string ("errors"));
-    pk.pack_array (errors.size ());
+    nlohmann::ordered_json out;
+    out["updated"] = static_cast<uint64_t> (updatedCount);
+    out["total"] = static_cast<uint64_t> (rows.size ());
+    out["errors"] = nlohmann::json::array ();
     for (const ErrEntry& ee : errors) {
-        pk.pack_map (2);
-        pk.pack (std::string ("elementId")); pk.pack (ee.elementId);
-        pk.pack (std::string ("message"));   pk.pack (ee.message);
+        nlohmann::ordered_json e;
+        e["elementId"] = ee.elementId;
+        e["message"] = ee.message;
+        out["errors"].push_back (e);
     }
 
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
     std::string outCompression;
     const std::string outB64 =
-        EncodeEnvelope (outBuf.data (), outBuf.size (), outCompression);
+        EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
 
     GS::ObjectState response;
     response.Add ("payload_b64", GS::UniString (outB64.c_str ()));
