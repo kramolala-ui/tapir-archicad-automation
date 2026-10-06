@@ -784,7 +784,8 @@ GS::ObjectState BulkSetTextsCommand::Execute (
                 continue;
             }
             if (e == NoError) ++updatedCount;
-            else errors.push_back ({row.elementId, "change failed"});
+            else errors.push_back ({row.elementId,
+                "change failed (code=" + std::to_string (static_cast<long long> (e)) + ")"});
         }
         return NoError;
     });
