@@ -539,6 +539,55 @@ failing command возвращает `{"error": {...}}`, что схема не 
 Симптом: `CMake Error at CMakeLists.txt:NN (message): zstd: не найден
 CMake target после FetchContent.`
 
+### FetchContent: SHA256 релизного tarball'а нестабилен — GIT_TAG надёжнее
+
+Релизные tarball'ы msgpack-cxx (и подобных) **пересобираются**
+GitHub'ом — SHA256 меняется между прогонами. CMake видит несовпадение,
+удаляет файл, пробует заново, потом падает.
+
+**Что делать:** для пересобираемых релизов — `GIT_REPOSITORY` +
+`GIT_TAG <tag>` + `GIT_SHALLOW TRUE` вместо `URL`+`URL_HASH`.
+
+Симптом: `SHA256 hash of ... does not match expected value` ×5, потом
+`CMake Error at .../download-...:163 (message): Each download failed!`
+
+### FetchContent: `SOURCE_SUBDIR` и на header-only
+
+msgpack-cxx называется «header-only», но в корне репозитория есть
+свой `CMakeLists.txt`, который делает `FIND_PACKAGE(Boost)`. Boost
+нам не нужен.
+
+**Что делать:** `SOURCE_SUBDIR include` — папка только с заголовками,
+без `CMakeLists.txt`. FetchContent скачает репозиторий, но
+`add_subdirectory` не вызовет.
+
+Симптом без фикса: `CMake Error at FindPackageHandleStandardArgs.cmake:
+Could NOT find Boost (missing: Boost_INCLUDE_DIR)`.
+
+### msgpack-cxx: `MSGPACK_NO_BOOST` обязателен
+
+`msgpack/sysdep.hpp` без макроса `MSGPACK_NO_BOOST` подключает
+`<boost/predef/other/endian.h>`. С макросом — свой вендоренный.
+
+**Что делать:** `target_compile_definitions (AddOn PRIVATE MSGPACK_NO_BOOST)`.
+
+Симптом: `fatal error C1083: Cannot open include file:
+'boost/predef/other/endian.h': No such file or directory`.
+
+### ACAPI_CallUndoableCommand — обязателен для мутаций модели
+
+`ACAPI_Element_Change` / `_Create` / `_Delete` **вне**
+`ACAPI_CallUndoableCommand` — либо не применяются, либо применяются,
+но создают undo-запись на каждый элемент. Пользователь не откатит
+батч одной Ctrl+Z.
+
+**Что делать:** один `ACAPI_CallUndoableCommand ("Name", [&]() { ... })`
+на весь батч. Для read-only обёртка не нужна — и не должна ставиться:
+при `dry_run` пустая undo-запись в стеке пользователя лишняя.
+
+Пример — `BulkFindReplaceText`: `doWork` — лямбда с циклом;
+`if (dryRun) doWork (); else ACAPI_CallUndoableCommand (...)`.
+
 ### Матрица workflow: `fail-fast: false` обязателен
 
 По умолчанию GitHub Actions `fail-fast: true` — падение одной версии
