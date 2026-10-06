@@ -392,10 +392,14 @@ C++:
 | 8 | `BulkGetElementData` V2 | **✓ работает** (2026-10-06, details/bbox/props/GDL/class/relations) |
 | 9 | `BulkGetElementMesh` | **⚠ только AC26** (ModelerAPI; на 25/27+ возвращает stub-error) |
 | 10 | `BulkGetGroupMembers` | **✓ работает** (нативные группы Ctrl+G, рекурсивно) |
-| 11 | `BulkCloneElement` | **⚠ в сборке** (hpp есть, cpp/AddOnMain досыпаются) |
+| 11 | `BulkCloneElement` v2 | **✓ работает** (sources[], один undo на батч) |
 | 12 | Bridge: настраиваемые лимиты | **✓ работает** (read/search/batch — не молча режут) |
-| 13 | Пакетный ACAPI (см. 4a) | TODO |
-| 14 | Остальные bulk-команды | TODO |
+| 13 | `BulkMoveElements` / `BulkRotateElements` | **✓ работает** (перенос/поворот, один undo) |
+| 14 | `BulkSetElementData` | **✓ работает** (element+GDL+Archicad/*+class/*; см. 4f) |
+| 15 | `BulkDeleteElements` | **✓ работает** (массовое удаление, один undo) |
+| 16 | `BulkGetGroupMembers with_data=true` | **✓ работает** (полные entity одним round-trip) |
+| 17 | CI-матрица 25/26/27/28/29 | **✓ зелёная** (2026-10-07, см. 4f) |
+| 18 | Схлопнуть дубль `CollectElementData` | TODO (см. 4f, бэклог) |
 
 **Замечание про msgpack:** изначально планировался `msgpack-cxx` — но
 он падает на MSVC с C2766 (см. раздел 5). На проводе **тот же формат
