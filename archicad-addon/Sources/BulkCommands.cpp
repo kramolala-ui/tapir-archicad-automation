@@ -642,21 +642,20 @@ GS::ObjectState BulkGetTextsCommand::Execute (
         element.header.guid = APIGuidFromString (guidStr.c_str ());
         if (element.header.guid != APINULLGuid &&
             ACAPI_Element_Get (&element) == NoError) {
-            API_ElementMemo memo = {};
-            GS::UniString txt;
-            if (ACAPI_Element_GetMemo (element.header.guid, &memo,
-                    APIMemoMask_TextContent | APIMemoMask_Paragraph) == NoError) {
-                txt = ReadTextFromMemo (memo);
-            }
-            ACAPI_DisposeElemMemoHdls (&memo);
-
-            if (element.header.typeID == API_TextID) {
-                typeStr = "Text";
-                textStr = txt.ToCStr ().Get ();
-                ++foundCount;
-            } else if (element.header.typeID == API_LabelID &&
-                       element.label.labelClass == APILblClass_Text) {
-                typeStr = "Label";
+            // GetMemo дёргаем ТОЛЬКО для Text/Label — иначе лишний вызов
+            // на каждый Wall/Slab в батче.
+            const bool isText = (element.header.typeID == API_TextID);
+            const bool isLabel = (element.header.typeID == API_LabelID &&
+                                  element.label.labelClass == APILblClass_Text);
+            if (isText || isLabel) {
+                API_ElementMemo memo = {};
+                GS::UniString txt;
+                if (ACAPI_Element_GetMemo (element.header.guid, &memo,
+                        APIMemoMask_TextContent | APIMemoMask_Paragraph) == NoError) {
+                    txt = ReadTextFromMemo (memo);
+                }
+                ACAPI_DisposeElemMemoHdls (&memo);
+                typeStr = isText ? "Text" : "Label";
                 textStr = txt.ToCStr ().Get ();
                 ++foundCount;
             }
