@@ -1290,6 +1290,32 @@ AC25-29. `GetElemTypeId(element.header)` вместо несуществующе
 это класс, а не Int32); лямбда `ACAPI_CallUndoableCommand` должна
 возвращать `NoError`. См. §10a «Ключевые API-факты».
 
+**2026-10-06:** В `BulkGetElementData` добавлены: (а) `selected=true` —
+читать текущее выделение Archicad одним вызовом (N=1 — клик, N>1 —
+рамка); (б) `params[group_guid]` — нативная группировка Ctrl+G из
+`element.header.groupGuid`; (в) для Object — `object_lib_part_name`,
+`object_pos_x/y`, `object_level`, `object_angle`, `object_x/y_ratio`
+(всё для переноса Object между проектами).
+
+**2026-10-06:** Собрана `BulkGetGroupMembers` — читает нативные группы
+Archicad через `ACAPI_ElementGroup_GetGroup` (element → parent) и
+`ACAPI_ElementGroup_GetAllGroupedElems` (group → members, рекурсивно).
+Один `element_guid` → вся группа (клик по прибору → обвязка). См. §10b.
+
+**2026-10-06:** `BulkCloneElement` (в разработке) — bulk-клон одного
+донора в N экземпляров. Читает `Get + GetMemo` источника, для каждой
+позиции копирует element, правит `pos/level/angle/story/layer`,
+опционально override GDL по имени, вызывает `ACAPI_Element_Create` под
+одним undo. v1 — только `Object`. См. §10b.
+
+**2026-10-06:** Bridge: убраны hardcoded обрезки в `read`/`search`/`batch`
+(было 400/300 символов, 20 файлов, 2 МБ, 1000 строк, 10 ops). Всё стало
+параметрами запроса с высокими дефолтами (2000 символов / 200 файлов /
+20 МБ / 20000 строк / 50 ops). У каждой строки — флаг
+`line_truncated: true`; в batch — `truncated: true`. Молчаливой обрезки
+больше нет — она ломала якоря replace и жгла токены на повторные чтения.
+См. §10b.
+
 ---
 
 ## 10a. BulkGetElementData / BulkGetElementMesh / геометрия (2026-10-06)
