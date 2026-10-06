@@ -1635,6 +1635,56 @@ symbol`. Дедуп сделан через большой replace с якоре
 проверять фактическое состояние файла. После фиксов — смотреть
 `applied_*` / `failed_*` / `verified_after_error`.
 
+### Тесты bulk-команд на AC26 (2026-10-06, вечер)
+
+Живой прогон через `BulkConnection` (IFC_analyzer) на проекте
+«Шаблон гидравлики IFC», Tapir 1.7.1, порт 19724, .apx от 20:21.
+
+**Read-канал — подтверждён:**
+
+| Команда | Сценарий | Результат |
+|---|---|---|
+| `BulkPing` | 'hello', 5 байт | ✅ 2 ms, `zstd_version=10506` |
+| `BulkGetPropertyValues` | 100×10 = 1000 значений | ✅ 42 ms, 878 filled |
+| `BulkGetPropertyValues` | серия 3×50×10 (главный баг JSON-пути) | ✅ все <25 ms, Archicad не виснет |
+| `BulkGetTexts` | 1006 элементов (487 Text + 519 Label) | ✅ 560 ms, все непустые |
+| `BulkGetElementData` V2 | 1 Object, all sections | ✅ 15 ms, params: GDL/*, bbox_*, class/*, object_*, story_index, layer_index, object_lib_part_name |
+| `BulkGetGroupMembers` | 35 элементов одной группы | ✅ 17 ms, 35 members, единый group_guid |
+
+**Три бага (не блокеры read-канала):**
+
+1. **`BulkGetTexts` — байтовый своп в части Text.** Часть объектов возвращает
+   текст в big-endian UTF-16: `'2'` читается корректно (однобайтный), а
+   `"2544"` приходит как `'㐲㔴'` (`\u3425\u3434`, байты свапнуты).
+   Причина — AC26 API `GetMemo(APIMemoMask_TextContent)` не всегда отдаёт
+   content в LE. Не наш баг сборки. Обход — проверять на принадлежность
+   BMP или нормализовать (TODO).
+2. **`BulkGetGroupMembers` — `groups_count=0` в ответе** при 35 фактически
+   возвращённых группах. Косметика: в C++ `Execute` заполняется
+   `out["groups"]`, но не считается `groups_count`.
+3. **`BulkSetTexts` — регрессия на текущем .apx (20:21).** no-op `'2'→'2'`,
+   swap `'2'→'9'`, restore — все падают с `-2130313112` (change failed).
+   По §9 (те же замеры до WIP-правок) было 50/50 успешно, 89 ms.
+   Проверить после свежей сборки — возможно, регрессия из WIP-правок
+   BulkCloneElement или dedup; если нет — лечить в `BulkSetTexts::Execute`.
+
+**Не проверено (нужны условия):**
+
+- `BulkGetElementMesh` — требует **открытого 3D-окна** в Archicad.
+  В FloorPlan вызов `ACAPI_3D_GetCurrentWindowSight` роняет Archicad
+  (не возвращает nullptr, а крешится). Никогда не звать вслепую — только
+  когда пользователь вручную открыл 3D-вид; в Python-обёртке
+  `ensure_3d_window=True` переключает окно через
+  `TapirConnection.change_window('3DModel')`.
+- `BulkGetElementData` с `selected=true` — возвращает пустой ответ на
+  AC26. Возможно, параметр поддержан в более новых сборках.
+- `BulkFindReplaceText` (dry_run), `BulkCloneElement` — ждут свежий
+  .apx, чтобы отделить регрессию write-пути от логики команд.
+- `RotateElementsByAngle` (форк-команда) — ждёт свежий .apx.
+
+**Локальный путь .apx (AC26, Win):**
+`C:\Program Files\GRAPHISOFT\Archicad 26\Расширения Archicad\TapirAddOn_AC26_Win.apx`.
+
 ---
 
 ## 11. Контакты и ссылки
