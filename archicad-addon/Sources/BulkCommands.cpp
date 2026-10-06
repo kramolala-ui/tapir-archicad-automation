@@ -2935,6 +2935,79 @@ bool IsObjectLike (const API_Element& element)
     return t == API_ObjectID || t == API_LampID;
 }
 
+struct GdlChange {
+    std::string name;
+    nlohmann::ordered_json value;
+};
+
+struct ClassChange {
+    API_Guid systemGuid;
+    API_Guid itemGuid;
+};
+
+GSErrCode ApplyGdlBatch (API_Element& element, const std::vector<GdlChange>& gdlChanges)
+{
+    if (gdlChanges.empty ()) return NoError;
+
+    API_ParamOwnerType paramOwner = {};
+    paramOwner.libInd = -1;
+#ifdef ServerMainVers_2600
+    paramOwner.type   = element.header.type;
+#else
+    paramOwner.typeID = element.header.typeID;
+#endif
+    paramOwner.guid   = element.header.guid;
+
+    GSErrCode err = ACAPI_LibraryPart_OpenParameters (&paramOwner);
+    if (err != NoError) return err;
+
+    API_GetParamsType getParams = {};
+    err = ACAPI_LibraryPart_GetActParameters (&getParams);
+    if (err != NoError) {
+        ACAPI_LibraryPart_CloseParameters ();
+        return err;
+    }
+
+    const GSSize nParams = BMGetHandleSize ((GSHandle) getParams.params) / sizeof (API_AddParType);
+    for (GSIndex k = 0; k < nParams; ++k) {
+        API_AddParType& p = (*getParams.params)[k];
+        if (p.typeID == APIParT_Separator) continue;
+        const std::string pname (p.name);
+        for (const GdlChange& c : gdlChanges) {
+            if (c.name == pname) {
+                ApplyGdlOverride (p, c.value);
+                break;
+            }
+        }
+    }
+
+    API_Element mask = {};
+    ACAPI_ELEMENT_MASK_CLEAR (mask);
+
+    API_ElementMemo memo = {};
+    memo.params = getParams.params;
+
+    err = ACAPI_Element_Change (&element, &mask, &memo, APIMemoMask_AddPars, true);
+
+    ACAPI_LibraryPart_CloseParameters ();
+    ACAPI_DisposeAddParHdl (&getParams.params);
+    return err;
+}
+
+GSErrCode ApplyClassBatch (const API_Guid& elemGuid, const std::vector<ClassChange>& classes)
+{
+    for (const ClassChange& cc : classes) {
+        API_ClassificationItem existing = {};
+        const GSErrCode getErr = ACAPI_Element_GetClassificationInSystem (elemGuid, cc.systemGuid, existing);
+        if (getErr == NoError && existing.guid != APINULLGuid) {
+            ACAPI_Element_RemoveClassificationItem (elemGuid, existing.guid);
+        }
+        const GSErrCode addErr = ACAPI_Element_AddClassificationItem (elemGuid, cc.itemGuid);
+        if (addErr != NoError) return addErr;
+    }
+    return NoError;
+}
+
 }  // namespace
 
 BulkSetElementDataCommand::BulkSetElementDataCommand () :
