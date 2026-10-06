@@ -992,9 +992,9 @@ GS::ObjectState BulkFindReplaceTextCommand::Execute (
 
             std::string typeStr;
             bool isLabel = false;
-            if (element.header.typeID == API_TextID) {
+            if (GetElemTypeId (element.header) == API_TextID) {
                 typeStr = "Text";
-            } else if (element.header.typeID == API_LabelID &&
+            } else if (GetElemTypeId (element.header) == API_LabelID &&
                        element.label.labelClass == APILblClass_Text) {
                 typeStr = "Label";
                 isLabel = true;
