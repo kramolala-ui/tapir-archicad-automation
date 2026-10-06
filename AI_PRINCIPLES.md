@@ -991,6 +991,32 @@ Bridge пишет всегда в `WORK_BRANCH`. Алиасы `@work` и `@fresh
 - **Обработка ошибок:** битый zstd-фрейм → структурная ошибка «zstd: not a valid zstd frame» (не падение).
 - Найдены и исправлены: (a) `compression` пустой → `'none'`; (b) unknown compression возвращал exception вместо ошибки (баг `GS::UniString::Printf` с `%T`).
 
+### 2026-10-06 — Приёмка bulk-канала через Python-клиент (9/9)
+
+Полный цикл приёмки через `BulkConnection` (IFC_analyzer):
+
+| Шаг | Что | Результат |
+|---|---|---|
+| 1 | import `BulkConnection` | ✅ |
+| 2 | создание через port | ✅ 34 ms, Tapir 1.7.1, «Шаблон гидравлики IFC» |
+| 3 | ping b'acceptance' | ✅ 9 ms, size=10, hex matches |
+| 4 | get_property_values 100×20 | ✅ **53 ms**, 2000 значений, 1568 заполнено |
+| 5 | get_texts_dict все Text проекта | ✅ **54 ms**, 487/487 непустых |
+| 6 | find_replace_text dry_run (кириллица) | ✅ 241 ms, scanned=1006 |
+| 7 | set_text no-op | ✅ 98 ms, значение не изменилось |
+| 8 | **СЕРИЯ 10 вызовов подряд** | ✅ **все ок**, avg 70 ms, max 303 ms |
+| 9 | финальный ping | ✅ Archicad отвечает |
+
+**Главное:** серия из 10 вызовов с чередованием команд (`ping`,
+`get_property_values`, `get_texts_dict`, `find_replace_text`) прошла
+без зависаний. Это **прямая замена** проблеме JSON-канала, где Archicad
+вешался после 2-3 вызовов `GetPropertyValuesOfElements` подряд.
+
+**Ключевые метрики на приёмке:**
+- get_property_values 100×20 = 53 ms (JSON-путь на 5000 значений — 6.9 s).
+- get_texts_dict 487 элементов = 54 ms.
+- Серия 10 вызовов: max 303 ms (find_replace_text сканирует весь проект).
+
 ### 2026-10-06 — Bulk-транспорт после зелёной сборки (5 команд, проект «Шаблон гидравлики IFC»)
 
 Всё на проекте **«Шаблон гидравлики IFC»** (653 Object, 3362 свойств,
