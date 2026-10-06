@@ -2946,6 +2946,39 @@ struct ClassChange {
     API_Guid itemGuid;
 };
 
+struct PropertyChange {
+    API_Guid propertyGuid;
+    std::string valueString;
+};
+
+GSErrCode ApplyPropertyBatch (const API_Guid& elemGuid,
+                              const std::vector<PropertyChange>& props)
+{
+    if (props.empty ()) return NoError;
+
+    GS::Array<API_Guid> propGuids;
+    GS::HashTable<API_Guid, GS::UniString> valuesByGuid;
+    for (const PropertyChange& pc : props) {
+        propGuids.Push (pc.propertyGuid);
+        valuesByGuid.Add (pc.propertyGuid, GS::UniString (pc.valueString.c_str ()));
+    }
+
+    GS::Array<API_Property> propValues;
+    const GSErrCode getErr = ACAPI_Element_GetPropertyValuesByGuid (elemGuid, propGuids, propValues);
+    if (getErr != NoError) return getErr;
+
+    PropertyConversionUtils conversionUtils;
+    for (API_Property& pv : propValues) {
+        GS::UniString* valueStr = valuesByGuid.GetPtr (pv.definition.guid);
+        if (valueStr == nullptr) continue;
+        GSErrCode e = ACAPI_Property_SetPropertyValueFromString (*valueStr, conversionUtils, &pv);
+        if (e != NoError) return e;
+        e = ACAPI_Element_SetProperty (elemGuid, pv);
+        if (e != NoError) return e;
+    }
+    return NoError;
+}
+
 GSErrCode ApplyGdlBatch (API_Element& element, const std::vector<GdlChange>& gdlChanges)
 {
     if (gdlChanges.empty ()) return NoError;
