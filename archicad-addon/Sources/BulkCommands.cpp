@@ -883,23 +883,16 @@ GS::ObjectState BulkFindReplaceTextCommand::Execute (
     bool scopeAll = true;
 
     try {
-        auto oh = msgpack::unpack (reinterpret_cast<const char*> (raw.data ()), raw.size ());
-        auto obj = oh.get ();
-        auto m = obj.as<std::map<std::string, msgpack::object>> ();
-        auto itF = m.find ("find");
-        if (itF == m.end ()) {
+        nlohmann::json j = nlohmann::json::from_msgpack (raw);
+        if (!j.contains ("find")) {
             return CreateErrorResponse (APIERR_BADPARS, "payload must contain 'find'");
         }
-        itF->second.convert (findStr);
-        auto itR = m.find ("replace");
-        if (itR != m.end ()) itR->second.convert (replaceStr);
-        auto itC = m.find ("case_sensitive");
-        if (itC != m.end ()) itC->second.convert (caseSensitive);
-        auto itD = m.find ("dry_run");
-        if (itD != m.end ()) itD->second.convert (dryRun);
-        auto itE = m.find ("elements");
-        if (itE != m.end ()) {
-            itE->second.convert (elemGuids);
+        findStr = j["find"].get<std::string> ();
+        if (j.contains ("replace")) replaceStr = j["replace"].get<std::string> ();
+        if (j.contains ("case_sensitive")) caseSensitive = j["case_sensitive"].get<bool> ();
+        if (j.contains ("dry_run")) dryRun = j["dry_run"].get<bool> ();
+        if (j.contains ("elements")) {
+            for (const auto& s : j["elements"]) elemGuids.push_back (s.get<std::string> ());
             scopeAll = false;
         }
     } catch (const std::exception& e) {
