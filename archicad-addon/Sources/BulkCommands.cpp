@@ -2444,7 +2444,7 @@ GS::ObjectState BulkGetGroupMembersCommand::Execute (
     response.Add ("payload_b64", GS::UniString (outB64.c_str ()));
     response.Add ("compression", GS::UniString (outCompression.c_str ()));
     response.Add ("elements_count", static_cast<Int64> (elementGuids.size ()));
-    response.Add ("groups_count", static_cast<Int64> (groupGuids.size ()));
+    response.Add ("groups_count", static_cast<Int64> (out["groups"].size ()));
     return response;
 }
 
