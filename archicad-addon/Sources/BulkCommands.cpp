@@ -727,22 +727,15 @@ GS::ObjectState BulkSetTextsCommand::Execute (
     struct Row { std::string elementId; std::string text; };
     std::vector<Row> rows;
     try {
-        auto oh = msgpack::unpack (reinterpret_cast<const char*> (raw.data ()), raw.size ());
-        auto obj = oh.get ();
-        auto m = obj.as<std::map<std::string, msgpack::object>> ();
-        auto itRows = m.find ("rows");
-        if (itRows == m.end ()) {
+        nlohmann::json j = nlohmann::json::from_msgpack (raw);
+        if (!j.contains ("rows")) {
             return CreateErrorResponse (APIERR_BADPARS, "payload must contain 'rows'");
         }
-        std::vector<std::map<std::string, msgpack::object>> rawRows;
-        itRows->second.convert (rawRows);
-        for (auto& rr : rawRows) {
-            auto itId = rr.find ("elementId");
-            auto itTx = rr.find ("text");
-            if (itId == rr.end () || itTx == rr.end ()) continue;
+        for (const auto& item : j["rows"]) {
+            if (!item.contains ("elementId") || !item.contains ("text")) continue;
             Row row;
-            itId->second.convert (row.elementId);
-            itTx->second.convert (row.text);
+            row.elementId = item["elementId"].get<std::string> ();
+            row.text = item["text"].get<std::string> ();
             rows.push_back (row);
         }
     } catch (const std::exception& e) {
