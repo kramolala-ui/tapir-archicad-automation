@@ -1452,7 +1452,7 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
     outVertices.clear ();
     outTriangles.clear ();
 
-#if !defined (ServerMainVers_2600)
+#if !TAPIR_AC26_ONLY
     // Mesh реализован только для AC26. На остальных версиях — graceful stub.
     // Причины: (1) ACAPI_3D_GetCurrentWindowSight есть только в AC26; (2) на
     // AC29 Model.hpp ломает GDL/PropertyListImp.hpp. См. AI_PRINCIPLES §10a.
