@@ -2603,6 +2603,12 @@ GS::ObjectState BulkGetGroupMembersCommand::Execute (
     std::vector<std::string> groupGuids;
     bool recursive = true;
 
+    // with_data: после дедупа групп тянем полные данные для всех уникальных
+    // member_guids через общий CollectElementData. Опции ниже 1-в-1 совпадают
+    // с payload BulkGetElementData. По умолчанию — false (старое поведение).
+    bool withData = false;
+    ElementDataOptions dataOpts;
+
     try {
         nlohmann::json j = nlohmann::json::from_msgpack (raw);
         if (j.contains ("element_guids")) {
@@ -2612,6 +2618,47 @@ GS::ObjectState BulkGetGroupMembersCommand::Execute (
             for (const auto& s : j["group_guids"]) groupGuids.push_back (s.get<std::string> ());
         }
         if (j.contains ("recursive")) recursive = j["recursive"].get<bool> ();
+        if (j.contains ("with_data")) withData = j["with_data"].get<bool> ();
+
+        if (withData) {
+            if (j.contains ("properties")) {
+                for (const auto& s : j["properties"]) dataOpts.propGuids.push_back (s.get<std::string> ());
+            }
+            if (j.contains ("gdl_names")) {
+                dataOpts.readGdl = true;
+                if (j["gdl_names"].is_string () && j["gdl_names"].get<std::string> () == "all") {
+                    dataOpts.gdlAll = true;
+                } else if (j["gdl_names"].is_array ()) {
+                    for (const auto& s : j["gdl_names"]) dataOpts.gdlNames.push_back (s.get<std::string> ());
+                }
+            }
+            if (j.contains ("classifications")) {
+                dataOpts.readClass = true;
+                if (j["classifications"].is_string () && j["classifications"].get<std::string> () == "all") {
+                    GS::Array<API_ClassificationSystem> allSystems;
+                    if (ACAPI_Classification_GetClassificationSystems (allSystems) == NoError) {
+                        for (const API_ClassificationSystem& s : allSystems) {
+                            dataOpts.classSystemGuids.push_back (APIGuidToString (s.guid).ToCStr ().Get ());
+                        }
+                    }
+                } else if (j["classifications"].is_array ()) {
+                    for (const auto& s : j["classifications"]) dataOpts.classSystemGuids.push_back (s.get<std::string> ());
+                }
+            }
+            if (j.contains ("connected_types")) {
+                for (const auto& s : j["connected_types"]) {
+                    API_ElemTypeID t;
+                    if (StringToElemTypeID (s.get<std::string> (), t)) dataOpts.connectedTypes.push_back (t);
+                }
+            }
+            if (j.contains ("with_bbox"))       dataOpts.withBbox       = j["with_bbox"].get<bool> ();
+            if (j.contains ("with_mesh"))       dataOpts.withMesh       = j["with_mesh"].get<bool> ();
+            if (j.contains ("apply_transform")) dataOpts.applyTransform = j["apply_transform"].get<bool> ();
+
+            // Члены группы — уже знаем их группу. Не рекурсируем обратно.
+            dataOpts.withGroupInfo    = false;
+            dataOpts.withGroupMembers = false;
+        }
     } catch (const std::exception& e) {
         const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
         return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
