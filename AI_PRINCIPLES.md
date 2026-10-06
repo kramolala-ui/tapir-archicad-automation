@@ -643,6 +643,147 @@ bc.tapir                                   # доступ к нижнему Tapi
 
 ---
 
+## 4f. Реестр bulk-команд + CI-грабли (2026-10-07)
+
+Философия bulk-канала: один `Execute` = один undo-барьер = один
+HTTP-round-trip. Это ответ на два ограничения ACAPI/Tapir (см. 4a,
+раздел 5):
+
+1. **JSON-стена Graphisoft:** большие JSON (>5000 значений) парсер не
+   переваривает (O(N²)).
+2. **Нестабильность серий:** два+ подряд вызова `GetPropertyValues` в
+   одном скрипте вешают Archicad насмерть.
+
+Bulk — не «ускорение ради ускорения». Если операция и так укладывается
+в 50 мс на одном вызове — bulk ей не нужен. Bulk нужен там, где
+JSON-стена или серия вызовов.
+
+### Правила контракта
+
+- Вход и выход — msgpack+zstd в `payload_b64` (см. §4).
+- Один `Execute` = один `ACAPI_CallUndoableCommand` (для write).
+- `dry_run` — опция для write (посчитать `applied_count` без применения).
+- Per-source отчёт (`per_source[]`) — по каждому входному элементу
+  отдельно: успех / ошибка / код ошибки. Ошибка одного элемента не
+  рвёт батч.
+- `compression` — `"none"` или `"zstd"`; передаётся в оба конца.
+
+### Реестр 13 команд
+
+| # | Команда | R/W | Версия AC | Назначение |
+|---|---|---|---|---|
+| 1 | `BulkPing` | — | 25–29 | Транспортный тест (base64+zstd round-trip) |
+| 2 | `BulkGetPropertyValues` | R | 25–29 | N×K свойств, чанки по 20 |
+| 3 | `BulkGetTexts` | R | 25–29 | Тексты Text/Label |
+| 4 | `BulkSetTexts` | W | 25–29 | Запись текста (⚠ см. §5 — баг -2130313112) |
+| 5 | `BulkFindReplaceText` | W | 25–29 | Find/replace, `dry_run` |
+| 6 | `BulkGetElementMesh` | R | **26 only** | Меш через ModelerAPI (`TAPIR_AC26_ONLY`) |
+| 7 | `BulkGetElementData` | R | 25–29 | details/bbox/props/GDL/class/relations |
+| 8 | `BulkGetGroupMembers` | R | 25–29 | Нативная группа (Ctrl+G) + `with_data=true` |
+| 9 | `BulkCloneElement` v2 | W | 25–29 | Копирование доноров из `sources[]` |
+| 10 | `BulkMoveElements` | W | 25–29 | Перенос по вектору (dx,dy,dz) |
+| 11 | `BulkRotateElements` | W | 25–29 | Поворот вокруг центра (по умолчанию — центр AABB) |
+| 12 | `BulkSetElementData` | W | 25–29 | Универсальная запись: element+GDL+Archicad+class |
+| 13 | `BulkDeleteElements` | W | 25–29 | Массовое удаление одним `ACAPI_Element_Delete` |
+
+### Общие хелперы (`BulkCommands.cpp`)
+
+- `EncodeEnvelope` / `DecodeEnvelope` — msgpack+zstd ↔ base64.
+- `CollectElementData(opts)` + `struct ElementDataOptions` — единый
+  сборщик данных по списку гуидов. Сейчас используется в
+  `BulkGetGroupMembers with_data=true`; в `BulkGetElementData::Execute`
+  пока **дубль** (см. бэклог).
+- `ApplyGdlBatch` / `ApplyClassBatch` / `ApplyPropertyBatch` — батч-запись
+  в Archicad (GDL, классификации, свойства).
+- `PropertyConversionUtils.hpp` — единая реализация
+  `API_PropertyConversionUtilsInterface` (символы единиц, метрические
+  типы). Вынесена из `PropertyCommands.cpp` — раньше был inline-класс
+  в одном файле, теперь общий для двух.
+
+### CI-грабли (проверено на матрице 25/26/27/28/29)
+
+**Матрица CI — 5 версий + `/WX`** (warnings-as-errors). Любой warning
+на любой версии = красный билд. Файл `.github/workflows/archicad_addon.yml`.
+
+**`TAPIR_AC26_ONLY` — почему «только 26».**
+`ServerMainVers_2600` определён во **всех** DevKit'ах начиная с 26 — это
+код версии, а не «эта версия = 26». Чтобы выразить «ровно 26», нужна
+явная проверка:
+
+```cpp
+#if defined(ServerMainVers_2600) && !defined(ServerMainVers_2700)
+#define TAPIR_AC26_ONLY 1
+#else
+#define TAPIR_AC26_ONLY 0
+#endif
+```
+
+Причина: `ACAPI_3D_GetCurrentWindowSight` есть только в AC26. На 27+
+`#include "Model.hpp"` ломает `GDL/PropertyListImp.hpp` (каскад
+C2039/C3083). Mesh реализован через stub:
+
+```cpp
+#if !TAPIR_AC26_ONLY
+    (void) elemHead;   // <-- обязательно, иначе C4100 + /WX
+    errOut = "mesh not supported on this Archicad version (only AC26 for now)";
+    return false;
+#else
+    // ... реальный обход ModelerAPI
+#endif
+```
+
+**C4100 на stub-ветках.** MSVC в C4100 указывает на **сигнатуру**
+параметра, не на место `(void)`. Пример из CI:
+
+```
+BulkCommands.cpp(1701,47): warning C4100: 'elemHead': unreferenced
+```
+
+Строка 1701 — это `bool ExtractElementMesh (const API_Elem_Head& elemHead,`.
+Но `(void) elemHead;` лежит на строке 1717, и MSVC о нём не сообщает.
+Правило: **любой параметр, использование которого условно через
+`#if !TAPIR_AC26_ONLY` / `#ifdef ServerMainVers_X`, глушить `(void)` в
+той ветке, где он не используется.** Иначе CI падает на 25/27/28/29,
+и без чтения точной сигнатуры неочевидно, в чём дело.
+
+**`ACAPI_LibPart_Get` — версии.**
+
+- Есть в AC25 и AC26. Алиаса в `MigrationHelper.hpp` для 27+ **нет**
+  (в файле есть `ACAPI_LibraryPart_GetParams` / `GetNum` /
+  `GetParamValues` — но не `Get`).
+- Значит `object_lib_part_name` в `BulkGetElementData` под
+  `#if TAPIR_AC26_ONLY` — читается **только на 26**. На 25 тоже не
+  читается, хотя функция доступна. TODO: расширить guard до
+  `#if !defined(ServerMainVers_2700)`.
+
+**MEP-типы в `GetConnectedElements` отвергаются Tapir.** Типы
+`MEP`, `MEPFitting`, `MEPTerminator`, `MEPBranch`, `Pipe`, `Duct`,
+`Cable` дают `-2130313112 Invalid connectedElementType`. Это контракт
+AddOn, не наш баг. Для MEP — обход через `spatial_query` /
+классификации / GDL-параметр `Connect_*`.
+
+### Бэклог
+
+- **Схлопнуть дубль `CollectElementData`.** Сейчас в
+  `BulkGetElementData::Execute` ~220 строк копии логики helper'а.
+  Отдельным патчем после обкатки `with_data` — `BulkGetElementData::Execute`
+  становится тонкой обёрткой (`парсинг payload → CollectElementData →
+  envelope`).
+- **`BulkSetTexts` — баг `-2130313112`.** Запись через `ACAPI_Element_Change`
+  падает на AC26 с этой ошибкой. Маски Text/charCode под
+  `#ifndef ServerMainVers_2800` пробовали менять порядок — не помогло.
+  Отдельная задача.
+- **`BulkSetDetails`** — обёртка над upstream `SetDetailsOfElements`
+  (типовые поля Wall/Slab/Zone, не покрытые `BulkSetElementData`).
+- **Python-обёртка `BulkConnection`** в IFC_analyzer — расширить под
+  Move/Rotate/SetElementData/Delete/GetGroupMembers-with-data (см. §4e
+  про текущий набор).
+
+**История §4c.** Раздел с номером 4c в файле отсутствует (сразу 4d —
+нумерационный пропуск). Не трогаем — так исторически.
+
+---
+
 ## 5. Известные грабли
 
 ### Graphisoft `target_link_libraries` — plain signature
