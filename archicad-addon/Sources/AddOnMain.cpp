@@ -1353,6 +1353,10 @@ GSErrCode Initialize (void)
             bulkCommands, "0.1.0",
             "(experimental) Bulk read of 3D mesh for many elements. Input payload: {elements: [guids], apply_transform?: bool=true}. Output payload: {rows: [{elementId, vertexCount, triangleCount, vertices: <binary float32 xyz>, triangles: <binary uint32 ijk>, error}]}. Uses ACAPI_ModelAccess_Get3DInfo + API_Component3D walk; fan-triangulation of polygons. Same wire format as ifcopenshell.geom."
         );
+        err |= RegisterCommand<BulkGetElementDataCommand> (
+            bulkCommands, "0.1.0",
+            "(experimental) Complex read of element data -> Entity dict. Input payload: {elements: [guids], properties?: [prop-guid], gdl_names?: [name]|'all', with_bbox?: bool=true}. Output payload: {entities: [{guid, element_type, parameters: {story_index, layer_index, bbox_*, <prop-guid>: value, GDL/<name>: value}, metadata: {source, aspects_loaded}}]}. V1 includes details + bbox + properties + GDL; V2 adds classifications + connected relations + mesh."
+        );
         AddCommandGroup (bulkCommands);
     }
 
