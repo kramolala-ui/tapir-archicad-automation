@@ -1,5 +1,6 @@
 #include "PropertyCommands.hpp"
 #include "MigrationHelper.hpp"
+#include "PropertyConversionUtils.hpp"
 #include "HashTable.hpp"
 #include <tuple>
 
