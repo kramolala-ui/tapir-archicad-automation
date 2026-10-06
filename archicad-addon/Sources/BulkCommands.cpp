@@ -816,35 +816,40 @@ GS::ObjectState BulkSetTextsCommand::Execute (
 
 
 // ---------------------------------------------------------------------
-//  BulkGetElementDataCommand  (V1)
+//  BulkGetElementDataCommand  (V2)
 // ---------------------------------------------------------------------
 //
-// Комплексное чтение одного объекта: details + bbox + properties + GDL.
-// Возврат — сразу структура под Entity (плоский parameters dict),
-// чтобы Python-клиент мапил в Entity минимально.
+// Комплексное чтение объекта: details + bbox + properties + GDL +
+// classifications + connected (relations) + mesh. Всё за один Execute.
 //
 // Вход (msgpack):
-//   { "elements":   ["guid", ...],
-//     "properties": ["prop-guid", ...],          // опц.
-//     "gdl_names":  ["A", "B", ...] | "all",    // опц.
-//     "with_bbox":  true }                      // default true
+//   { "elements":         ["guid", ...],
+//     "properties":       ["prop-guid", ...],          // опц.
+//     "gdl_names":        ["A", "B"] | "all",          // опц.
+//     "classifications":  ["system-guid", ...] | "all",// опц.
+//     "connected_types":  ["Door", "Window", ...],     // опц.
+//     "with_bbox":        true,                        // default true
+//     "with_mesh":        false,                       // default false
+//     "apply_transform":  true }                       // default true
 //
 // Выход (msgpack):
 //   { "entities": [
-//       { "guid":         "...",
-//         "element_type": "Object" | "Wall" | ...,
-//         "parameters":   { "story_index": 0,
-//                            "layer_index": 679,
-//                            "bbox_min_x": ..., ..., "bbox_size_z": ...,
-//                            "<prop-guid>": "<value>",
-//                            "GDL/A": 2.0, ... },
-//         "metadata":     { "source": "archicad",
-//                            "aspects_loaded": [...],
-//                            "error": null | "element not found" } }
-//     ] }
-//
-// V2 (TODO): classifications, connected elements (relations), mesh включить
-// в тот же ответ (или звать BulkGetElementMesh отдельно).
+//       { "guid": "...", "element_type": "Object",
+//         "parameters": { "story_index": 0, "layer_index": 679,
+//                         "bbox_min_x": ..., "bbox_size_z": ...,
+//                         "<prop-guid>": "<value>",
+//                         "GDL/A": 2.0,
+//                         "class/<system-guid>": "<item-guid>" },
+//         "metadata": { "source": "archicad",
+//                       "aspects_loaded": [...] },
+//         "mesh": { // если with_mesh=true
+//           "vertexCount": N, "triangleCount": M,
+//           "vertices":  <binary float32 xyz>,
+//           "triangles": <binary uint32 ijk> } }
+//     ],
+//     "relations": [
+//       { "from_guid": "...", "to_guid": "...",
+//         "kind": "connected_to", "via": "Door" } ] }
 
 namespace {
 
@@ -875,8 +880,34 @@ const char* ElementTypeName (API_ElemTypeID t)
     }
 }
 
-// GDL value -> JSON. Best-effort: real-типы -> number, CString -> string,
-// целочисленные -> number. Всё остальное — пропускаем (null).
+// Обратный маппинг имени типа -> API_ElemTypeID.
+// Только те, что поддерживает ACAPI_Grouping_GetConnectedElements на AC26.
+bool StringToElemTypeID (const std::string& s, API_ElemTypeID& out)
+{
+    static const std::map<std::string, API_ElemTypeID> table = {
+        {"Wall",         API_WallID},
+        {"Column",       API_ColumnID},
+        {"Beam",         API_BeamID},
+        {"Slab",         API_SlabID},
+        {"Roof",         API_RoofID},
+        {"Shell",        API_ShellID},
+        {"Mesh",         API_MeshID},
+        {"Morph",        API_MorphID},
+        {"Zone",         API_ZoneID},
+        {"Door",         API_DoorID},
+        {"Window",       API_WindowID},
+        {"Object",       API_ObjectID},
+        {"CurtainWall",  API_CurtainWallID},
+        {"Stair",        API_StairID},
+        {"Railing",      API_RailingID},
+    };
+    auto it = table.find (s);
+    if (it == table.end ()) return false;
+    out = it->second;
+    return true;
+}
+
+// GDL value -> JSON. Best-effort.
 nlohmann::ordered_json GdlValueToJson (const API_AddParType& p)
 {
     switch (p.typeID) {
