@@ -3316,7 +3316,20 @@ GS::ObjectState BulkSetElementDataCommand::Execute (
                 }
             }
 
-            // 3. Classifications (class/*)
+            // 3. Properties (Archicad/*)
+            if (!propChanges.empty ()) {
+                const GSErrCode e = ApplyPropertyBatch (guid, propChanges);
+                if (e == NoError) ++appliedCount;
+                else {
+                    nlohmann::ordered_json err2;
+                    err2["msg"]  = "Property batch failed";
+                    err2["code"] = static_cast<int64_t> (e);
+                    srcOut["errors"].push_back (err2);
+                    ++errorsCount;
+                }
+            }
+
+            // 4. Classifications (class/*)
             if (!classChanges.empty ()) {
                 const GSErrCode e = ApplyClassBatch (guid, classChanges);
                 if (e == NoError) ++appliedCount;
