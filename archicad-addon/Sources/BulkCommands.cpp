@@ -595,15 +595,12 @@ GS::ObjectState BulkGetTextsCommand::Execute (
 
     std::vector<std::string> elemGuids;
     try {
-        auto oh = msgpack::unpack (reinterpret_cast<const char*> (raw.data ()), raw.size ());
-        auto obj = oh.get ();
-        auto m = obj.as<std::map<std::string, msgpack::object>> ();
-        auto itEl = m.find ("elements");
-        if (itEl == m.end ()) {
+        nlohmann::json j = nlohmann::json::from_msgpack (raw);
+        if (!j.contains ("elements")) {
             return CreateErrorResponse (APIERR_BADPARS,
                 "payload must contain 'elements'");
         }
-        itEl->second.convert (elemGuids);
+        for (const auto& s : j["elements"]) elemGuids.push_back (s.get<std::string> ());
     } catch (const std::exception& e) {
         const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
         return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
