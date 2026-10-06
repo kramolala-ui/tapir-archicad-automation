@@ -2379,7 +2379,7 @@ GS::ObjectState BulkGetGroupMembersCommand::Execute (
             continue;
         }
         API_Guid parentGroup = APINULLGuid;
-        if (ACAPI_ElementGroup_GetGroup (elemGuid, &parentGroup) != NoError) {
+        if (ACAPI_Grouping_GetGroup (elemGuid, &parentGroup) != NoError) {
             parentGroup = APINULLGuid;
         }
         expandGroup (eg, "element", parentGroup);
