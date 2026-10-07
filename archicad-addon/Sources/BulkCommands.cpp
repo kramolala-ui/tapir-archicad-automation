@@ -3304,7 +3304,8 @@ struct PropertyChange {
 };
 
 GSErrCode ApplyPropertyBatch (const API_Guid& elemGuid,
-                              const std::vector<PropertyChange>& props)
+                              const std::vector<PropertyChange>& props,
+                              std::vector<API_Guid>& notAppliedOut)
 {
     if (props.empty ()) return NoError;
 
@@ -3327,6 +3328,22 @@ GSErrCode ApplyPropertyBatch (const API_Guid& elemGuid,
         if (e != NoError) return e;
         e = ACAPI_Element_SetProperty (elemGuid, pv);
         if (e != NoError) return e;
+    }
+
+    // Re-read to detect silently-ignored properties (e.g. read-only Pset).
+    // ACAPI_SetProperty returns NoError even when the property was not written.
+    GS::Array<API_Property> verify;
+    if (ACAPI_Element_GetPropertyValuesByGuid (elemGuid, propGuids, verify) == NoError) {
+        for (const API_Property& vp : verify) {
+            GS::UniString* wanted = valuesByGuid.GetPtr (vp.definition.guid);
+            if (wanted == nullptr) continue;
+            GS::UniString current;
+            if (ACAPI_Property_GetPropertyValueString (vp, conversionUtils, &current) != NoError
+                || current != *wanted)
+            {
+                notAppliedOut.push_back (vp.definition.guid);
+            }
+        }
     }
     return NoError;
 }
