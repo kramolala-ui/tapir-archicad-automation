@@ -859,6 +859,16 @@ AddOn, не наш баг. Для MEP — обход через `spatial_query` 
 - **Python-обёртка `BulkConnection`** в IFC_analyzer — **расширена**
   2026-10-07 под Move/Rotate/SetElementData/Delete/GetGroupMembers.
   Осталось: публичный `call()` для эскейп-хэтча и TypedDicts.
+- **`BulkSetElementData`: `applied[]` не отражает GDL/Archicad/class.**
+  Косметика; реальная запись — работает. Добавить ключи в
+  `srcOut["applied"]` по каждому батчу (`gdlChanges` / `propChanges` /
+  `classChanges`).
+- **`BulkSetElementData`: `applied_count` = число батчей, не полей.**
+  Считать как число успешно применённых ключей или как 1 (элемент
+  успешно применён) — но не путать с числом полей в отчёте.
+- **`ApplyClassBatch`: пробросить ошибку `RemoveClassificationItem`.**
+  Сейчас `err` от `Remove` не проверяется; если старый item не снялся,
+  это маскируется успехом `Add`.
 
 **История §4c.** Раздел с номером 4c в файле отсутствует (сразу 4d —
 нумерационный пропуск). Не трогаем — так исторически.
