@@ -1409,10 +1409,12 @@ nlohmann::ordered_json CollectElementData (const ElementDataOptions& opts)
                 GS::Array<API_Guid> connectedElements;
 
                 if (ownerIsZone) {
+#ifdef ServerMainVers_2600
                     // Zone: ACAPI_Grouping_GetConnectedElements не работает на AC26
                     // (проверено 2026-10-07: и Object, и Zone дают 0 рёбер).
                     // Используем ACAPI_Element_GetRelations + API_RoomRelation —
                     // та же логика, что в GetRelationsOfElementsCommand (ElementCommands.cpp).
+                    // API_ElemType и GetRelations доступны только с AC26 — обёрнуто в #ifdef.
                     API_RoomRelation relation = {};
                     API_ElemType other;
                     other.typeID = t;
@@ -1424,6 +1426,11 @@ nlohmann::ordered_json CollectElementData (const ElementDataOptions& opts)
                             });
                     }
                     ACAPI_DisposeRoomRelationHdls (&relation);
+#else
+                    // AC25: API_ElemType / ACAPI_Element_GetRelations недоступны.
+                    // connectedElements остаётся пустым — цикл по рёбрам ниже не выполнится,
+                    // kind не будет установлен. То же поведение, что до Zone-патча.
+#endif
                 } else {
                     if (ACAPI_Grouping_GetConnectedElements (guid, t, &connectedElements) != NoError) continue;
                 }
