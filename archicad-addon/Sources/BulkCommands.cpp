@@ -3448,16 +3448,27 @@ GSErrCode ApplyGdlBatch (API_Element& element,
     return err;
 }
 
-GSErrCode ApplyClassBatch (const API_Guid& elemGuid, const std::vector<ClassChange>& classes)
+GSErrCode ApplyClassBatch (const API_Guid& elemGuid,
+                           const std::vector<ClassChange>& classes,
+                           std::vector<API_Guid>& notAppliedOut)
 {
     for (const ClassChange& cc : classes) {
         API_ClassificationItem existing = {};
         const GSErrCode getErr = ACAPI_Element_GetClassificationInSystem (elemGuid, cc.systemGuid, existing);
         if (getErr == NoError && existing.guid != APINULLGuid) {
-            ACAPI_Element_RemoveClassificationItem (elemGuid, existing.guid);
+            const GSErrCode rmErr = ACAPI_Element_RemoveClassificationItem (elemGuid, existing.guid);
+            if (rmErr != NoError) return rmErr;
         }
         const GSErrCode addErr = ACAPI_Element_AddClassificationItem (elemGuid, cc.itemGuid);
         if (addErr != NoError) return addErr;
+
+        // Verify the item was really set (locked system → silent ignore).
+        API_ClassificationItem verify = {};
+        if (ACAPI_Element_GetClassificationInSystem (elemGuid, cc.systemGuid, verify) != NoError
+            || verify.guid != cc.itemGuid)
+        {
+            notAppliedOut.push_back (cc.systemGuid);
+        }
     }
     return NoError;
 }
