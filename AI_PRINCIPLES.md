@@ -683,7 +683,7 @@ JSON-стена или серия вызовов.
 | 9 | `BulkCloneElement` v2 | W | 25–29 | Копирование доноров из `sources[]` | ✅ 2026-10-07 |
 | 10 | `BulkMoveElements` | W | 25–29 | Перенос по вектору (dx,dy,dz) | ✅ 2026-10-07 (Δx = 5.0 ровно) |
 | 11 | `BulkRotateElements` | W | 25–29 | Поворот вокруг центра (по умолчанию — центр AABB) | ✅ 2026-10-07 (bbox 4.19/1.91→1.91/4.19) |
-| 12 | `BulkSetElementData` | W | 25–29 | Универсальная запись: element+GDL+Archicad+class | ✅ 2026-10-07 (dry_run) |
+| 12 | `BulkSetElementData` | W | 25–29 | Универсальная запись: element+GDL+Archicad+class | ✅ 2026-10-07 (4/4 категории) |
 | 13 | `BulkDeleteElements` | W | 25–29 | Массовое удаление одним `ACAPI_Element_Delete` | ✅ 2026-10-07 |
 
 ### Общие хелперы (`BulkCommands.cpp`)
