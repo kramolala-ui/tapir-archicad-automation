@@ -1560,6 +1560,7 @@ GS::ObjectState BulkGetElementDataCommand::Execute (
         if (j.contains ("with_bbox"))       withBbox       = j["with_bbox"].get<bool> ();
         if (j.contains ("with_mesh"))       withMesh       = j["with_mesh"].get<bool> ();
         if (j.contains ("apply_transform")) applyTransform = j["apply_transform"].get<bool> ();
+        if (j.contains ("with_2d_geometry")) with2DGeometry = j["with_2d_geometry"].get<bool> ();
     } catch (const std::exception& e) {
         const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
         return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
