@@ -2004,6 +2004,13 @@ symbol`. Дедуп сделан через большой replace с якоре
 | `BulkCloneElement` v2 | 1 Object → 2 клона | ✅ 2 `created_guids`, `per_source` с `errors=[]` |
 | `BulkMoveElements` | dx=+5.0 | ✅ `moved_count=1`, Δx = 5.0 ровно |
 | `BulkRotateElements` | angle_rad=π/2 | ✅ `rotated_count=1`, bbox_size 4.19/1.91 → 1.91/4.19 |
+| `BulkGetElementData` (Zone→Object) | выделенная зона, `connected_types=['Object']` | ✅ 26 рёбер, все `kind='zone_content'` |
+| `BulkGetElementData` (Wall→Window) | стена, `connected_types=['Window']` | ✅ 2 окна |
+| `BulkGetElementData` (Label-text) | выделенная выноска, `with_2d_geometry=true` | ✅ `geometry.text = 'СТН-034\r#Тип, марка…'`, `owner_element_id='A59207C8-…'` (Wall) |
+| `BulkGetElementData` (2D Hatch) | выделенная штриховка, `with_2d_geometry=true` | ✅ 5 точек контура, `holes=[]`, `fill_id`, `contour_pen_index=0` |
+| `BulkGetElementData` (2D Circle) | выделенная окружность, `with_2d_geometry=true` | ✅ `origin`, `radius=2.1`, `geometry.type='Circle'` (различается от Arc) |
+| `BulkGetElementData` (2D PolyLine) | случайный PolyLine, `with_2d_geometry=true` | ✅ `coordinates`, `arcs`, `room_separator` |
+| `BulkGetElementData` (TypeName fix) | окружность без патча | ⚠ возвращал `element_type='Unknown'`; после патча — `'Circle'` |
 | `BulkDeleteElements` | те же 2 клона | ✅ `deleted_count=2`, после — оба `element not found` |
 | `BulkSetTexts` | no-op `'2'→'2'` | ⚠ `-2130313112` — ждёт сборки патча |
 
