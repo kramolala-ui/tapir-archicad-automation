@@ -2389,6 +2389,245 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
     }
     return true;
 }
+
+// ---------------------------------------------------------------------
+//  Ear-clipping triangulation (AC25/AC26).
+//
+//  Раньше полигоны триангулировались fan-ом от v0. На невыпуклых
+//  полигонах fan даёт треугольники с противоположной ориентацией —
+//  VTK красит их по-разному (диагональные артефакты на плоских
+//  гранях стен, панелей, плит).
+//
+//  Ear-clipping сохраняет согласованную ориентацию всех треугольников
+//  полигона: каждый треугольник ориентирован по внешней нормали контура.
+// ---------------------------------------------------------------------
+
+double Len3 (double x, double y, double z)
+{
+    return std::sqrt (x * x + y * y + z * z);
+}
+
+void PolygonNormalNewell (const std::vector<float>& verts,
+                          const uint32_t* loop, size_t n,
+                          double outN[3])
+{
+    outN[0] = outN[1] = outN[2] = 0.0;
+    if (n < 3) return;
+    for (size_t i = 0; i < n; ++i) {
+        const uint32_t i0 = loop[i];
+        const uint32_t i1 = loop[(i + 1) % n];
+        const double x0 = verts[i0 * 3 + 0];
+        const double y0 = verts[i0 * 3 + 1];
+        const double z0 = verts[i0 * 3 + 2];
+        const double x1 = verts[i1 * 3 + 0];
+        const double y1 = verts[i1 * 3 + 1];
+        const double z1 = verts[i1 * 3 + 2];
+        outN[0] += (y0 - y1) * (z0 + z1);
+        outN[1] += (z0 - z1) * (x0 + x1);
+        outN[2] += (x0 - x1) * (y0 + y1);
+    }
+}
+
+void PlaneAxesFromNormal (const double n[3], double u[3], double v[3])
+{
+    const double ax = n[0] < 0 ? -n[0] : n[0];
+    const double ay = n[1] < 0 ? -n[1] : n[1];
+    const double az = n[2] < 0 ? -n[2] : n[2];
+    double a[3];
+    if (ax <= ay && ax <= az)      { a[0] = 1; a[1] = 0; a[2] = 0; }
+    else if (ay <= az)             { a[0] = 0; a[1] = 1; a[2] = 0; }
+    else                           { a[0] = 0; a[1] = 0; a[2] = 1; }
+
+    double ux = a[1]*n[2] - a[2]*n[1];
+    double uy = a[2]*n[0] - a[0]*n[2];
+    double uz = a[0]*n[1] - a[1]*n[0];
+    double ulen = Len3 (ux, uy, uz);
+    if (ulen < 1e-12) {
+        a[0] = 0; a[1] = 1; a[2] = 0;
+        ux = a[1]*n[2] - a[2]*n[1];
+        uy = a[2]*n[0] - a[0]*n[2];
+        uz = a[0]*n[1] - a[1]*n[0];
+        ulen = Len3 (ux, uy, uz);
+        if (ulen < 1e-12) { u[0] = 1; u[1] = 0; u[2] = 0; }
+        else { u[0] = ux/ulen; u[1] = uy/ulen; u[2] = uz/ulen; }
+    } else {
+        u[0] = ux/ulen; u[1] = uy/ulen; u[2] = uz/ulen;
+    }
+    v[0] = n[1]*u[2] - n[2]*u[1];
+    v[1] = n[2]*u[0] - n[0]*u[2];
+    v[2] = n[0]*u[1] - n[1]*u[0];
+}
+
+double SignedArea2D (const double* xs, const double* ys, size_t n)
+{
+    if (n < 3) return 0.0;
+    double s = 0.0;
+    for (size_t i = 0; i < n; ++i) {
+        const size_t j = (i + 1) % n;
+        s += xs[i] * ys[j] - xs[j] * ys[i];
+    }
+    return s * 0.5;
+}
+
+bool PointInTriangle2D (double px, double py,
+                        double ax, double ay,
+                        double bx, double by,
+                        double cx, double cy)
+{
+    const double d1 = (px - bx) * (ay - by) - (ax - bx) * (py - by);
+    const double d2 = (px - cx) * (by - cy) - (bx - cx) * (py - cy);
+    const double d3 = (px - ax) * (cy - ay) - (cx - ax) * (py - ay);
+    const bool hasNeg = (d1 < 0) || (d2 < 0) || (d3 < 0);
+    const bool hasPos = (d1 > 0) || (d2 > 0) || (d3 > 0);
+    return !(hasNeg && hasPos);
+}
+
+// Ear-clipping для простого 2D-полигона. Полигон задан CCW (после
+// нормализации). Пишет локальные индексы треугольников (тройками)
+// в outLocalTris. Возвращает true, если удалось отдать триангуляцию
+// без fallback.
+bool EarClip2D (const std::vector<double>& xs,
+                const std::vector<double>& ys,
+                std::vector<int>& outLocalTris)
+{
+    const int n = static_cast<int> (xs.size ());
+    if (n < 3) return false;
+    if (n == 3) {
+        outLocalTris.push_back (0);
+        outLocalTris.push_back (1);
+        outLocalTris.push_back (2);
+        return true;
+    }
+
+    std::vector<int> idx (static_cast<size_t> (n));
+    for (int i = 0; i < n; ++i) idx[static_cast<size_t> (i)] = i;
+
+    auto cross2 = [] (double ax, double ay, double bx, double by,
+                      double cx, double cy) -> double {
+        return (bx - ax) * (cy - ay) - (by - ay) * (cx - ax);
+    };
+
+    bool cleanFinish = true;
+    while (static_cast<int> (idx.size ()) > 3) {
+        bool clipped = false;
+        const int m = static_cast<int> (idx.size ());
+        for (int i = 0; i < m; ++i) {
+            const int ip = idx[static_cast<size_t> ((i + m - 1) % m)];
+            const int ic = idx[static_cast<size_t> (i)];
+            const int in = idx[static_cast<size_t> ((i + 1) % m)];
+
+            const double ax = xs[static_cast<size_t> (ip)];
+            const double ay = ys[static_cast<size_t> (ip)];
+            const double bx = xs[static_cast<size_t> (ic)];
+            const double by = ys[static_cast<size_t> (ic)];
+            const double cx = xs[static_cast<size_t> (in)];
+            const double cy = ys[static_cast<size_t> (in)];
+
+            if (cross2 (ax, ay, bx, by, cx, cy) <= 0) continue;
+
+            bool hasInside = false;
+            for (int k = 0; k < m; ++k) {
+                if (k == i || k == (i + m - 1) % m || k == (i + 1) % m) continue;
+                const int iv = idx[static_cast<size_t> (k)];
+                if (PointInTriangle2D (xs[static_cast<size_t> (iv)],
+                                       ys[static_cast<size_t> (iv)],
+                                       ax, ay, bx, by, cx, cy)) {
+                    hasInside = true;
+                    break;
+                }
+            }
+            if (hasInside) continue;
+
+            outLocalTris.push_back (ip);
+            outLocalTris.push_back (ic);
+            outLocalTris.push_back (in);
+            idx.erase (idx.begin () + i);
+            clipped = true;
+            break;
+        }
+        if (!clipped) { cleanFinish = false; break; }
+    }
+
+    if (static_cast<int> (idx.size ()) == 3) {
+        outLocalTris.push_back (idx[0]);
+        outLocalTris.push_back (idx[1]);
+        outLocalTris.push_back (idx[2]);
+        return cleanFinish;
+    }
+    // Fallback — ear-clipping встал (вырожденный/самопересекающийся
+    // контур). Отдаём fan на остатке, чтобы не терять полигон.
+    for (size_t k = 1; k + 1 < idx.size (); ++k) {
+        outLocalTris.push_back (idx[0]);
+        outLocalTris.push_back (idx[k]);
+        outLocalTris.push_back (idx[k + 1]);
+    }
+    return false;
+}
+
+// Триангулирует один 3D-полигон (contourGlobal — замкнутый контур).
+// Пишет глобальные индексы треугольников в outTriangles.
+// Возвращает true при успехе (без fallback).
+bool TriangulatePolygon (const std::vector<float>& verts,
+                         const std::vector<uint32_t>& contourGlobal,
+                         std::vector<uint32_t>& outTriangles)
+{
+    size_t n = contourGlobal.size ();
+    if (n >= 2 && contourGlobal.front () == contourGlobal.back ()) --n;
+    if (n < 3) return false;
+
+    std::vector<uint32_t> loop (contourGlobal.begin (),
+                                contourGlobal.begin ()
+                                    + static_cast<ptrdiff_t> (n));
+
+    double nrm[3];
+    PolygonNormalNewell (verts, loop.data (), n, nrm);
+    const double nlen = Len3 (nrm[0], nrm[1], nrm[2]);
+    if (nlen < 1e-9) return false;
+    nrm[0] /= nlen; nrm[1] /= nlen; nrm[2] /= nlen;
+
+    double u[3], v[3];
+    PlaneAxesFromNormal (nrm, u, v);
+
+    std::vector<double> xs (n), ys (n);
+    for (size_t i = 0; i < n; ++i) {
+        const uint32_t gi = loop[i];
+        const double x = verts[gi * 3 + 0];
+        const double y = verts[gi * 3 + 1];
+        const double z = verts[gi * 3 + 2];
+        xs[i] = x * u[0] + y * u[1] + z * u[2];
+        ys[i] = x * v[0] + y * v[1] + z * v[2];
+    }
+
+    const double area2 = SignedArea2D (xs.data (), ys.data (), n);
+    if (area2 < 1e-12 && area2 > -1e-12) return false;
+
+    std::vector<int> localTris;
+    localTris.reserve ((n - 2) * 3);
+
+    if (area2 < 0.0) {
+        // CW -> разворачиваем 2D-контур и отображение индексов.
+        for (size_t i = 0, j = n - 1; i < j; ++i, --j) {
+            const double tx = xs[i]; xs[i] = xs[j]; xs[j] = tx;
+            const double ty = ys[i]; ys[i] = ys[j]; ys[j] = ty;
+        }
+        std::vector<uint32_t> rev (n);
+        for (size_t i = 0; i < n; ++i) rev[i] = loop[n - 1 - i];
+        const bool ok = EarClip2D (xs, ys, localTris);
+        const size_t before = outTriangles.size ();
+        for (int t : localTris) {
+            outTriangles.push_back (rev[static_cast<size_t> (t)]);
+        }
+        return ok && outTriangles.size () > before;
+    }
+
+    const bool ok = EarClip2D (xs, ys, localTris);
+    const size_t before = outTriangles.size ();
+    for (int t : localTris) {
+        outTriangles.push_back (loop[static_cast<size_t> (t)]);
+    }
+    return ok && outTriangles.size () > before;
+}
+
 #else
 bool ExtractElementMesh (const API_Elem_Head& elemHead,
                          bool /*applyTransform*/,
