@@ -1891,6 +1891,10 @@ symbol`. Дедуп сделан через большой replace с якоре
 | `BulkGetGroupMembers` (без data) | 1 выделенный Object | ✅ 1 запись, 37 `member_guids`, единый `group_guid` |
 | `BulkGetGroupMembers with_data=true` | та же группа, 37 членов | ✅ 37 entity в одном round-trip, `details+bbox+gdl`, 152–172 params (130–150 GDL), missing=0 |
 | `BulkSetElementData` (dry_run) | 2 Object, `story_index` + `bbox_size_x` + `foo_bar` | ✅ `applied=[story_index]`, `ignored_readonly=[bbox_size_x]`, `ignored_unknown=[foo_bar]` |
+| `BulkSetElementData` (write) | element-field: `object_pos_x` 476.74→477.0→476.74 | ✅ |
+| `BulkSetElementData` (write) | GDL: `GDL/A` 0.8→1.0→0.8 | ✅ |
+| `BulkSetElementData` (write) | Archicad: `ElementID` `Ст. 1, 1А`→`TEST_BULK_27016`→`Ст. 1, 1А` | ✅ |
+| `BulkSetElementData` (write) | class: `Радиатор отопления`→`Схемы отопления`→`Радиатор отопления` | ✅ |
 | `BulkCloneElement` v2 | 1 Object → 2 клона | ✅ 2 `created_guids`, `per_source` с `errors=[]` |
 | `BulkMoveElements` | dx=+5.0 | ✅ `moved_count=1`, Δx = 5.0 ровно |
 | `BulkRotateElements` | angle_rad=π/2 | ✅ `rotated_count=1`, bbox_size 4.19/1.91 → 1.91/4.19 |
