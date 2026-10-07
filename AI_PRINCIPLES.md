@@ -1821,6 +1821,37 @@ archicad_commands.py`) — все опираются на позиционный
     все элементы независимо от layer visibility и layer combination.
   • **Требует построенного 3D-кеша.** Один раз переключиться в 3D-вид,
     дать Archicad просчитать модель. Дальше — хоть на плане.
+  • **`Get3DBoundingBoxes` возвращает bbox для 2D-символов.** Не
+    признак наличия 3D-тела. У Object'ов с 2D-символом (GDL без 3D-
+    скрипта) bbox есть, но `BulkGetElementMesh` отвечает `error='empty
+    mesh (no triangles collected)'`. Реальная проверка — только чтение
+    mesh. На тестовом проекте: 653 Object, 220 с mesh, 433 без 3D-тела.
+  • **Батчинг обязателен.** `BulkGetElementMesh` на 2000+ элементов
+    ломается (`no response from Tapir`). По 100 — стабильно.
+  • **Реконнект при обрыве.** После 200+ элементов через одно
+    соединение AC SDK может молча уронить следующую серию вызовов.
+    Catch на `no response from Tapir` → пересоздать `TapirConnection`
+    → retry один раз.
+
+### Python-обёртка (IFC_analyzer)
+
+Единый контракт для realtime-тестов — `tools/_archicad_realtime_helpers.py`.
+Используется в `tools/test_realtime_archicad_geometry.py` (выделенные
+элементы) и `tools/test_realtime_full_scene.py` (вся 3D-сцена).
+
+  • `extract_guid(item)` — guid из элемента Tapir-ответа (4 формы).
+  • `to_bytes(v)` — bytes из row (bulk может вернуть bytes / str).
+  • `mesh_from_row(row)` — BulkGetElementMesh row → pv.PolyData:
+    clean + compute_normals (consistent + auto_orient).
+  • `mesh_hash(row)` — md5(vertices + triangles) для детекта изменений.
+  • `z_range_from_row(row)` — (z_min, z_max) для extrude Zone.
+  • `fetch_zone_outlines(tapir, guids)` — {guid: [(x,y), ...]} через
+    GetDetailsOfElements + позиционный матчинг.
+  • `signed_area_2d(pts)` — shoelace (знак обхода контура).
+  • `triangulate_ring(pts_xy, z)` — через vtkContourTriangulator.
+  • `zone_mesh_from_outline(outline, z_min, z_max)` — extrude призмы.
+
+Единый префикс логов — `[rt]`.
 
 ### GUID-нормализация в C++ — TODO при следующей сборке
 
