@@ -746,6 +746,22 @@ BulkCommands.cpp(1701,47): warning C4100: 'elemHead': unreferenced
 той ветке, где он не используется.** Иначе CI падает на 25/27/28/29,
 и без чтения точной сигнатуры неочевидно, в чём дело.
 
+**`APIERR_BADPARS = -2130313112`.** Общий код «неверные параметры».
+Появляется в двух разных случаях, и путать их нельзя:
+
+- **Неверный msgpack-payload:** в C++ `nlohmann::json::from_msgpack`
+  бросает `type_error.302` (`type must be string, but is object`),
+  `Execute` ловит и отдаёт `APIERR_BADPARS` с текстом ошибки. Пример —
+  передали массив объектов вместо массива строк в `element_guids`.
+- **Отказ `ACAPI_Element_Change`:** маски/memo не сошлись, ACAPI
+  отвергает. Пример — `BulkSetTexts` через `SetTextContentAndParagraphs`
+  (устаревший путь) на AC26; фикс — переход на
+  `TextLabelDetails::ApplyTextContent`.
+
+Правило диагностики: если в ответе есть `msg=`, это **первый** случай
+— смотри формат payload. Если ошибка приходит как `change failed
+(code=-2130313112)` — это **второй** случай, копай memo/mask.
+
 **`ACAPI_LibPart_Get` — версии.**
 
 - Есть в AC25 и AC26. Алиаса в `MigrationHelper.hpp` для 27+ **нет**
