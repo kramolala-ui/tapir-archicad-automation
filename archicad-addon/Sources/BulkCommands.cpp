@@ -1421,6 +1421,9 @@ nlohmann::ordered_json CollectElementData (const ElementDataOptions& opts)
                     // Используем ACAPI_Element_GetRelations + API_RoomRelation —
                     // та же логика, что в GetRelationsOfElementsCommand (ElementCommands.cpp).
                     // API_ElemType и GetRelations доступны только с AC26 — обёрнуто в #ifdef.
+                    //
+                    // objects и zone-in-zone лежат в elementsGroupedByType,
+                    // стены/балки/витражи границ — в отдельных полях wallPart/beamPart/cwSegmentPart.
                     API_RoomRelation relation = {};
                     API_ElemType other;
                     other.typeID = t;
@@ -1430,6 +1433,13 @@ nlohmann::ordered_json CollectElementData (const ElementDataOptions& opts)
                                 if (et.typeID != t) return;
                                 for (const API_Guid& g : arr) connectedElements.Push (g);
                             });
+                        if (t == API_WallID) {
+                            for (const API_WallPart& part : relation.wallPart) connectedElements.Push (part.guid);
+                        } else if (t == API_BeamID) {
+                            for (const API_BeamPart& part : relation.beamPart) connectedElements.Push (part.guid);
+                        } else if (t == API_CurtainWallID) {
+                            for (const API_CWSegmentPart& part : relation.cwSegmentPart) connectedElements.Push (part.guid);
+                        }
                     }
                     ACAPI_DisposeRoomRelationHdls (&relation);
 #else
