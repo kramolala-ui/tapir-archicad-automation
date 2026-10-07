@@ -2324,7 +2324,14 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
         //    localVerts[localIdx-1] = world (x,y,z) (после возможной tranmat).
         //    Индексация — 1-based, копируем в outVertices с базовым сдвигом.
         const uint32_t bodyBaseIdx = static_cast<uint32_t> (outVertices.size () / 3);
-        std::vector<uint32_t> localToGlobal (static_cast<size_t> (nVert) + 1, 0);
+        // Маркер "не задано" — UINT32_MAX, а НЕ 0. Индекс 0 валиден:
+        // для первой вершины первого тела outVertices.size()=0 до
+        // push_back, и globalIdx = 0. Проверка `gv == 0` далее
+        // ошибочно отсеивала все рёбра, инцидентные v0, — отсюда
+        // потеря грани бокса (8v/9t/3boundary у Object и Zone).
+        const uint32_t kInvalidIdx = static_cast<uint32_t> (-1);
+        std::vector<uint32_t> localToGlobal (static_cast<size_t> (nVert) + 1, kInvalidIdx);
+        (void) bodyBaseIdx;  // для совместимости, не используется
         for (Int32 iVert = 1; iVert <= nVert; ++iVert) {
             API_Component3D vc = {};
             vc.header.typeID = API_VertID;
