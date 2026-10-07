@@ -949,16 +949,32 @@ AddOn, не наш баг. Для MEP — обход через `spatial_query` 
 - **Python-обёртка `BulkConnection`** в IFC_analyzer — **расширена**
   2026-10-07 под Move/Rotate/SetElementData/Delete/GetGroupMembers.
   Осталось: публичный `call()` для эскейп-хэтча и TypedDicts.
-- **`BulkSetElementData`: `applied[]` не отражает GDL/Archicad/class.**
-  Косметика; реальная запись — работает. Добавить ключи в
-  `srcOut["applied"]` по каждому батчу (`gdlChanges` / `propChanges` /
-  `classChanges`).
-- **`BulkSetElementData`: `applied_count` = число батчей, не полей.**
-  Считать как число успешно применённых ключей или как 1 (элемент
-  успешно применён) — но не путать с числом полей в отчёте.
-- **`ApplyClassBatch`: пробросить ошибку `RemoveClassificationItem`.**
-  Сейчас `err` от `Remove` не проверяется; если старый item не снялся,
-  это маскируется успехом `Add`.
+**Закрыто 2026-10-07:**
+
+- ✅ `BulkSetElementData: applied[]` — теперь включает GDL/Archicad/class
+  ключи из `notAppliedOut`. `ignored_locked[]` — для полей, которые ACAPI
+  проглотил (locked параметр/свойство). `applied_count` = суммарное
+  число применённых ключей по всем источникам (не батчей).
+- ✅ `ApplyClassBatch` пробрасывает ошибку `RemoveClassificationItem`
+  наружу. Раньше глоталась — маскировалась успехом `Add`.
+- ✅ `BulkSetTexts` (текст Text/Label) — патч на `ApplyTextContent`
+  собран, `BulkCloneLabels` использует тот же путь.
+
+**Открыто:**
+
+- **Python-обёртка `BulkConnection` в IFC_analyzer:** добавить
+  `get_element_data(..., with_2d_geometry=True)`, `clone_labels(source_guid,
+  instances)`, `call(op, payload)` для эскейп-хэтча и TypedDicts.
+- **Нода-фасад `archicad_get_2d_geometry`** в IFC_analyzer — одна нода с
+  параметром `types=['PolyLine','Hatch','Arc',...]`, обёртка над bulk.
+  Заменит шаги GetDetailsOfElements + ручной разбор.
+- **Нода `archicad_get_element_links`** — объединит `get_connected_elements`
+  и `get_zone_elements`: плоский DataFrame `{source, target, kind, via}`
+  с `kind ∈ {connected_to, zone_content, zone_boundary, zone_neighbour}`.
+  Внутри — bulk-get-element-data с `connected_types` + опц. reverse-lookup
+  для opening→host.
+- **`BulkCloneLabels` v2:** поддержать `delete_source` (после проверки
+  сигнатуры `ACAPI_Element_Delete`).
 
 **История §4c.** Раздел с номером 4c в файле отсутствует (сразу 4d —
 нумерационный пропуск). Не трогаем — так исторически.
