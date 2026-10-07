@@ -1381,6 +1381,10 @@ GSErrCode Initialize (void)
             bulkCommands, "0.1.0",
             "Bulk-delete elements in one Execute. Input payload: {guids: [\"guid\", ...]}. Output payload: {per_source: [{guid, deleted, error}], deleted_count, errors_count}. One undo barrier for the whole batch."
         );
+        err |= RegisterCommand<BulkCloneLabelsCommand> (
+            bulkCommands, "0.1.0",
+            "Bulk-clone a donor text Label into N instances. Input payload: {sources?: [{source_guid, instances}], source_guid?, instances: [{beg_x, beg_y, mid_x?, mid_y?, end_x?, end_y?, text?, owner_guid?, story_index?, layer_index?}]}. Only text labels (labelClass=Text); symbol labels → error (use CreateLabels). Output payload: {per_source: [{source_guid, created_guids, errors}], created_guids, created_count, errors_count}. One undo barrier for the whole batch."
+        );
         AddCommandGroup (bulkCommands);
     }
 
