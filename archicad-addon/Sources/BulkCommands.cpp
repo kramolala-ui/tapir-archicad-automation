@@ -3897,11 +3897,10 @@ static bool GdlValueMatches (const API_AddParType& p, const nlohmann::json& v)
         const double target = v.get<double> ();
         switch (p.typeID) {
             case APIParT_Integer:
-                return static_cast<double> (p.value.iNum) == target;
+            case APIParT_Boolean:
             case APIParT_RealNum:
             case APIParT_Length:
-            case APIParT_Angle:
-            case APIParT_Ratio: {
+            case APIParT_Angle: {
                 const double diff = p.value.real - target;
                 return diff < 1e-9 && diff > -1e-9;
             }
