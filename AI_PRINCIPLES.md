@@ -670,21 +670,21 @@ JSON-стена или серия вызовов.
 
 ### Реестр 13 команд
 
-| # | Команда | R/W | Версия AC | Назначение |
-|---|---|---|---|---|
-| 1 | `BulkPing` | — | 25–29 | Транспортный тест (base64+zstd round-trip) |
-| 2 | `BulkGetPropertyValues` | R | 25–29 | N×K свойств, чанки по 20 |
-| 3 | `BulkGetTexts` | R | 25–29 | Тексты Text/Label |
-| 4 | `BulkSetTexts` | W | 25–29 | Запись текста (⚠ см. §5 — баг -2130313112) |
-| 5 | `BulkFindReplaceText` | W | 25–29 | Find/replace, `dry_run` |
-| 6 | `BulkGetElementMesh` | R | **26 only** | Меш через ModelerAPI (`TAPIR_AC26_ONLY`) |
-| 7 | `BulkGetElementData` | R | 25–29 | details/bbox/props/GDL/class/relations |
-| 8 | `BulkGetGroupMembers` | R | 25–29 | Нативная группа (Ctrl+G) + `with_data=true` |
-| 9 | `BulkCloneElement` v2 | W | 25–29 | Копирование доноров из `sources[]` |
-| 10 | `BulkMoveElements` | W | 25–29 | Перенос по вектору (dx,dy,dz) |
-| 11 | `BulkRotateElements` | W | 25–29 | Поворот вокруг центра (по умолчанию — центр AABB) |
-| 12 | `BulkSetElementData` | W | 25–29 | Универсальная запись: element+GDL+Archicad+class |
-| 13 | `BulkDeleteElements` | W | 25–29 | Массовое удаление одним `ACAPI_Element_Delete` |
+| # | Команда | R/W | Версия AC | Назначение | Проверено вживую |
+|---|---|---|---|---|---|
+| 1 | `BulkPing` | — | 25–29 | Транспортный тест (base64+zstd round-trip) | ✅ 2026-10-07 |
+| 2 | `BulkGetPropertyValues` | R | 25–29 | N×K свойств, чанки по 20 | ✅ 2026-10-06 |
+| 3 | `BulkGetTexts` | R | 25–29 | Тексты Text/Label | ✅ 2026-10-07 |
+| 4 | `BulkSetTexts` | W | 25–29 | Запись текста | ⚠ патч на `ApplyTextContent` отправлен, ждёт сборки |
+| 5 | `BulkFindReplaceText` | W | 25–29 | Find/replace, `dry_run` | ✅ 2026-10-07 (dry_run) |
+| 6 | `BulkGetElementMesh` | R | **26 only** | Меш через ModelerAPI (`TAPIR_AC26_ONLY`) | не гонялся |
+| 7 | `BulkGetElementData` | R | 25–29 | details/bbox/props/GDL/class/relations | ✅ 2026-10-07 |
+| 8 | `BulkGetGroupMembers` | R | 25–29 | Нативная группа (Ctrl+G) + `with_data=true` | ✅ 2026-10-07 (37 entity одним вызовом) |
+| 9 | `BulkCloneElement` v2 | W | 25–29 | Копирование доноров из `sources[]` | ✅ 2026-10-07 |
+| 10 | `BulkMoveElements` | W | 25–29 | Перенос по вектору (dx,dy,dz) | ✅ 2026-10-07 (Δx = 5.0 ровно) |
+| 11 | `BulkRotateElements` | W | 25–29 | Поворот вокруг центра (по умолчанию — центр AABB) | ✅ 2026-10-07 (bbox 4.19/1.91→1.91/4.19) |
+| 12 | `BulkSetElementData` | W | 25–29 | Универсальная запись: element+GDL+Archicad+class | ✅ 2026-10-07 (dry_run) |
+| 13 | `BulkDeleteElements` | W | 25–29 | Массовое удаление одним `ACAPI_Element_Delete` | ✅ 2026-10-07 |
 
 ### Общие хелперы (`BulkCommands.cpp`)
 
