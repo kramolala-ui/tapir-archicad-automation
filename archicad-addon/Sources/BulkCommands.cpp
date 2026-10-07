@@ -711,8 +711,8 @@ GS::ObjectState BulkGetTextsCommand::Execute (
 // Выход (msgpack в payload_b64): { "updated": N, "total": M,
 //   "errors": [{"elementId": "...", "message": "..."}] }
 //
-// Переиспользует SetTextContentAndParagraphs (тот же путь, что
-// CreateTexts/ModifyTexts) через ApplyTextToElement.
+// Переиспользует TextLabelDetails::ApplyTextContent (тот же путь,
+// что CreateTexts / ModifyTexts / ModifyLabels) через ApplyTextToElement.
 
 BulkSetTextsCommand::BulkSetTextsCommand () :
     CommandBase (CommonSchema::Used)
