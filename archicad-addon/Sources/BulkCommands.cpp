@@ -3348,7 +3348,38 @@ GSErrCode ApplyPropertyBatch (const API_Guid& elemGuid,
     return NoError;
 }
 
-GSErrCode ApplyGdlBatch (API_Element& element, const std::vector<GdlChange>& gdlChanges)
+// Compare the requested GDL value against what's actually in the
+// API_AddParType. Used to detect locked parameters (ACAPI returns
+// NoError but silently discards the write).
+static bool GdlValueMatches (const API_AddParType& p, const nlohmann::json& v)
+{
+    if (v.is_number ()) {
+        const double target = v.get<double> ();
+        switch (p.typeID) {
+            case APIParT_Integer:
+                return static_cast<double> (p.value.iNum) == target;
+            case APIParT_RealNum:
+            case APIParT_Length:
+            case APIParT_Angle:
+            case APIParT_Ratio: {
+                const double diff = p.value.real - target;
+                return diff < 1e-9 && diff > -1e-9;
+            }
+            default:
+                return true;   // unknown numeric type — don't lie
+        }
+    }
+    if (v.is_string ()) {
+        if (p.typeID != APIParT_CString || p.value.uStr == nullptr) return true;
+        const GS::UniString us (p.value.uStr);
+        return us == GS::UniString (v.get<std::string> ().c_str ());
+    }
+    return true;   // non-numeric, non-string — assume matches
+}
+
+GSErrCode ApplyGdlBatch (API_Element& element,
+                         const std::vector<GdlChange>& gdlChanges,
+                         std::vector<std::string>& notAppliedOut)
 {
     if (gdlChanges.empty ()) return NoError;
 
@@ -3391,6 +3422,26 @@ GSErrCode ApplyGdlBatch (API_Element& element, const std::vector<GdlChange>& gdl
     memo.params = getParams.params;
 
     err = ACAPI_Element_Change (&element, &mask, &memo, APIMemoMask_AddPars, true);
+
+    // Re-read (still inside OpenParameters) to detect locked parameters.
+    if (err == NoError) {
+        ACAPI_DisposeAddParHdl (&getParams.params);
+        getParams.params = nullptr;
+        if (ACAPI_LibraryPart_GetActParameters (&getParams) == NoError) {
+            const GSSize nv = BMGetHandleSize ((GSHandle) getParams.params) / sizeof (API_AddParType);
+            for (const GdlChange& c : gdlChanges) {
+                bool matches = false;
+                for (GSIndex k = 0; k < nv; ++k) {
+                    const API_AddParType& p = (*getParams.params)[k];
+                    if (p.typeID == APIParT_Separator) continue;
+                    if (c.name != std::string (p.name)) continue;
+                    matches = GdlValueMatches (p, c.value);
+                    break;
+                }
+                if (!matches) notAppliedOut.push_back (c.name);
+            }
+        }
+    }
 
     ACAPI_LibraryPart_CloseParameters ();
     ACAPI_DisposeAddParHdl (&getParams.params);
