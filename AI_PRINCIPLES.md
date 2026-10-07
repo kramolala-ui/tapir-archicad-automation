@@ -700,6 +700,66 @@ JSON-стена или серия вызовов.
   типы). Вынесена из `PropertyCommands.cpp` — раньше был inline-класс
   в одном файле, теперь общий для двух.
 
+### BulkSetElementData — 4 категории записи (проверено 2026-10-07)
+
+Одна команда, один undo, один round-trip — пишет четыре типа полей
+в элемент. Все проверены живьём на Object (`D610F7A9-...` в
+«Шаблоне гидравлики IFC»), с полным циклом write → read → revert:
+
+| Категория | Ключ в payload | API-канал | Пример |
+|---|---|---|---|
+| Element fields | `story_index`, `layer_index`, `object_pos_x/y`, `object_level`, `object_angle` | `ACAPI_Element_Change` + маски | `object_pos_x` 476.74 → 477.0 → 476.74 ✅ |
+| GDL | `GDL/<name>` | `ACAPI_LibraryPart_OpenParameters` → `GetActParameters` → правка → `Element_Change(APIMemoMask_AddPars)` | `GDL/A` 0.8 → 1.0 → 0.8 ✅ |
+| Archicad-свойство | `Archicad/<property-guid>` | `ACAPI_Property_SetPropertyValueFromString` + `ACAPI_Element_SetProperty` | `ElementID` `Ст. 1, 1А` → `TEST_BULK_27016` → `Ст. 1, 1А` ✅ |
+| Классификация | `class/<system-guid>` = `<item-guid>` | `ACAPI_Element_RemoveClassificationItem` + `AddClassificationItem` | `Радиатор отопления` → `Схемы отопления` → `Радиатор отопления` ✅ |
+
+**Read-only поля** (`bbox_*`) — попадают в `ignored_readonly[]`,
+не пишутся. **Неизвестные ключи** — в `ignored_unknown[]`.
+**Невалидный guid** в `<...-guid>` — в `errors[]` с ключом и
+сообщением.
+
+**Пример payload** (msgpack, всё в одном элементе):
+
+```
+{
+  "entities": [{
+    "guid": "D610F7A9-3C48-4DFB-A4FB-0E5E35414FB6",
+    "parameters": {
+      "story_index":        0,
+      "layer_index":        813,
+      "object_pos_x":       477.0,
+      "GDL/A":              1.0,
+      "Archicad/8BACB089-BBFE-41C2-B5A4-D1CEBC2F4FB3": "TEST_BULK_27016",
+      "class/8D827552-0242-4637-9649-0A6319191A3D": "BBB4A714-59CD-4C72-92DB-352574B2F373"
+    }
+  }],
+  "dry_run": false
+}
+```
+
+**Известная косметика (см. бэклог):**
+
+- **`applied[]` пустой при write.** Реальная запись проходит
+  (проверено read-after-write), но `srcOut["applied"]` не заполняется
+  ключами GDL/Archicad/class. В отчёте видно только element-поля.
+- **`applied_count` = число батчей, не полей.** Всегда 1 на элемент,
+  даже если записано 6 полей из 4 категорий.
+- **`ApplyClassBatch` глотает ошибку `RemoveClassificationItem`.**
+  Если старый item не снялся, `Add` нового может дать неверный
+  результат.
+
+**Регистр GUID'ов.** API Archicad возвращает guid в **UPPERCASE**
+(`16CFDFE0-...`), а принимает **любой** — работает и в lowercase.
+В клиенте сравнивать через `.lower()` — как `BulkConnection` уже
+делает. Прямое `==` строк даст ложный промах.
+
+**Нюанс GDL для Object/Lamp.** Параметры `A` и `B` требуют
+**дополнительных масок** `xRatio` / `yRatio` (см.
+`SetGDLParametersOfElementsCommand`). Обычные GDL-параметры пишутся
+через `APIMemoMask_AddPars` без специальных масок. Для смены `A`
+или `B` — использовать индивидуальную команду `SetGDLParameters`
+до отдельной доработки bulk-канала.
+
 ### CI-грабли (проверено на матрице 25/26/27/28/29)
 
 **Матрица CI — 5 версий + `/WX`** (warnings-as-errors). Любой warning
