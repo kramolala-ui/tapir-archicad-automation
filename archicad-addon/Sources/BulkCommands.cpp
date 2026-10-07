@@ -2273,6 +2273,17 @@ void ApplyTranmat (const API_Tranmat& t, double& x, double& y, double& z)
 // (ACAPI-вершины идут в локальных координатах, а не в world — см.
 // ElementCommands.cpp:4148 про #563, где bbox уже world, а вертексы — нет).
 #if !defined (ServerMainVers_2700)
+
+// Forward declaration. TriangulatePolygon определена НИЖЕ — после тела
+// ExtractElementMesh, но в том же #if-блоке. Вызов идёт изнутри функции,
+// поэтому C++ требует объявление раньше. Определения helper'ов
+// (Len3 / PolygonNormalNewell / PlaneAxesFromNormal / SignedArea2D /
+// PointInTriangle2D / EarClip2D) идут перед TriangulatePolygon, так что
+// линковка внутри одного translation unit'а корректна.
+bool TriangulatePolygon (const std::vector<float>& verts,
+                         const std::vector<uint32_t>& contourGlobal,
+                         std::vector<uint32_t>& outTriangles);
+
 bool ExtractElementMesh (const API_Elem_Head& elemHead,
                          bool applyTransform,
                          std::vector<float>& outVertices,
