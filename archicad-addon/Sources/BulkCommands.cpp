@@ -1403,6 +1403,11 @@ nlohmann::ordered_json CollectElementData (const ElementDataOptions& opts)
             if (anyConn) entity["metadata"]["aspects_loaded"].push_back ("connected");
         }
 
+        // ---- 2D geometry ----
+        if (opts.with2DGeometry) {
+            Collect2DGeometryToJson (element, entity);
+        }
+
         // ---- mesh (только AC26 — на других версиях graceful stub) ----
         if (opts.withMesh) {
             std::vector<float>    vertices;
