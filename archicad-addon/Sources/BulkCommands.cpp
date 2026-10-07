@@ -3,36 +3,15 @@
 #include "ElementCreationCommands.hpp"
 #include "PropertyConversionUtils.hpp"
 
-// ModelerAPI — для BulkGetElementMesh (см. AI_PRINCIPLES.md §2c, §10a).
-// Заголовки лежат в Support/Modules/GSModelDevLib и GSModeler. Модули
-// линкуются автоматически через LinkGSLibrariesToProject (Tools/CMakeCommon.cmake).
+// BulkGetElementMesh использует низкоуровневый 3D-component API
+// (ACAPI_ModelAccess_Get3DInfo / ACAPI_ModelAccess_GetComponent).
+// Он доступен на AC25+AC26 — alias'ы в MigrationHelper.hpp определены
+// только при !ServerMainVers_2700. На AC27+ сигнатура API другая,
+// там mesh временно не работает (см. AI_PRINCIPLES §4f).
 //
-// ⚠ Только AC26: на AC25/27/28/29 функция ACAPI_3D_GetCurrentWindowSight
-// отсутствует (error C3861 при компиляции), плюс на AC29 подключение
-// Model.hpp ломает GDL/PropertyListImp.hpp (каскад C2039/C3083).
-// Version-aware путь для 27+ — TODO (§10a). Пока mesh работает на AC26.
-//
-// ServerMainVers_2600 определён во ВСЕХ DevKit'ах начиная с AC26 — это код
-// версии, а не «эта версия = 26». Значит, чтобы выразить «ровно AC26»,
-// нужна явная проверка: 2600 есть И 2700 нет. Иначе mesh-код попадает в
-// сборку AC27/28/29 — и падает C3861 на ACAPI_3D_GetCurrentWindowSight.
-#if defined (ServerMainVers_2600) && !defined (ServerMainVers_2700)
-#define TAPIR_AC26_ONLY 1
-#else
-#define TAPIR_AC26_ONLY 0
-#endif
-
-#if TAPIR_AC26_ONLY
-#include "Model.hpp"
-#include "ModelElement.hpp"
-#include "ModelMeshBody.hpp"
-#include "Polygon.hpp"
-#include "ConvexPolygon.hpp"
-#include "Vertex.hpp"
-#include "exp.h"
-#include "Sight.hpp"
-#include "IAttributeReader.hpp"
-#endif
+// Раньше использовался ModelerAPI (SightPtr + EXPGetModel). На AC26
+// он крешил (см. AI_PRINCIPLES §4f, 2026-10-07). Текущий путь не
+// требует активного 3D-окна и работает по component-индексам.
 
 #include <unordered_map>
 
