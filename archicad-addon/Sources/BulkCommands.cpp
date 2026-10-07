@@ -2070,9 +2070,9 @@ GS::ObjectState BulkCloneLabelsCommand::Execute (
             for (size_t i = 0; i < task.instances.size (); ++i) {
                 const auto& inst = task.instances[i];
                 API_Element el = srcElem;
-                el.header.guid = APINullGuid;
+                el.header.guid = APINULLGuid;
                 el.header.modiStamp = 0;
-                el.header.groupGuid = APINullGuid;
+                el.header.groupGuid = APINULLGuid;
 
                 if (inst.contains ("story_index"))
                     el.header.floorInd = static_cast<short> (inst["story_index"].get<int> ());
