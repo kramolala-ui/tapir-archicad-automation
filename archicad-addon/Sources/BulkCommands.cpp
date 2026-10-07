@@ -2768,9 +2768,19 @@ GS::ObjectState BulkGetElementMeshCommand::Execute (
 
     for (const std::string& guidStr : elemGuids) {
         nlohmann::ordered_json row;
-        row["elementId"] = guidStr;
 
         API_Guid guid = APIGuidFromString (guidStr.c_str ());
+        // Канонический UPPER — контракт с GetDetailsOfElements и
+        // BulkGetElementData (они всегда возвращают UPPER). Раньше
+        // писался guidStr как пришёл — на lower-case входе источники
+        // и получатель расходились по регистру, и Python-клиент делал
+        // .upper() при сопоставлении. Теперь регистр нормализован
+        // на выходе C++.
+        // Для invalid guid сохраняем как пришло — нормализовать нечего,
+        // ошибка должна быть видна с исходным входом для отладки.
+        row["elementId"] = (guid == APINULLGuid)
+            ? guidStr
+            : APIGuidToString (guid).ToCStr ().Get ();
         if (guid == APINULLGuid) {
             row["vertexCount"] = 0;
             row["triangleCount"] = 0;
