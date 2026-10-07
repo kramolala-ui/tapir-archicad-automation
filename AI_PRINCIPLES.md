@@ -761,6 +761,95 @@ JSON-стена или серия вызовов.
 или `B` — использовать индивидуальную команду `SetGDLParameters`
 до отдельной доработки bulk-канала.
 
+### BulkGetElementData — расширения 2026-10-07
+
+Три независимых расширения поверх V2 (details/bbox/props/GDL/class/relations):
+
+**1. Zone-ветка в блоке `connected`.** `ACAPI_Grouping_GetConnectedElements`
+на AC26 для Zone **не работает** — и Object, и Zone дают 0 рёбер (проверено
+живьём на выделенной зоне). Замена — `ACAPI_Element_GetRelations` +
+`API_RoomRelation` (та же логика, что в `GetRelationsOfElementsCommand`,
+`ElementCommands.cpp:3065`). `kind` вычисляется по паре (owner_type,
+target_type):
+
+| Owner | Target | kind |
+|---|---|---|
+| Zone | Object | `zone_content` |
+| Zone | Zone | `zone_neighbour` |
+| Zone | Wall/Beam/CW/… | `zone_boundary` |
+| не-Zone | любой | `connected_to` |
+
+Обратный ход (window → wall) работает через `elem.label.parent` /
+`elem.window.owner` (прямое поле элемента), не через Grouping.
+
+**2. `with_2d_geometry` (default false).** В `entity["geometry"]` попадает
+контур/точки/радиус/углы/текст для 8 типов 2D-элементов. Имена ключей
+**совпадают** с `GetDetailsOfElements` — единый контракт для per-element
+и bulk. Реализация — `Collect2DGeometryToJson(element, out)`; контуры
+PolyLine/Hatch читаются через существующий `GetPolygonsFromMemoCoords`
+из `CommandBase.hpp` (не дублируется).
+
+| Тип | Что в `geometry` |
+|---|---|
+| PolyLine | `coordinates` + `arcs` + `room_separator` + `line_pen_index` |
+| Line | `beg_coordinate` + `end_coordinate` + room_separator + pen |
+| Arc | `origin` + `radius` + `angle` + `ratio` + `beg_angle` + `end_angle` + `reflected` |
+| Circle | То же (различается по `header.type.typeID == API_CircleID`) |
+| Hatch | `coordinates` + `holes[]` + `contour_pen_index` + `fill_pen_index` + `fill_background_pen_index` + `fill_id` + `building_material_id` + `show_area` |
+| Label | `label_class` + `owner_element_id` + `beg/mid/end_coordinate` + `text` + `paragraph_count` |
+| Text | `position` + `angle` + `height` + `pen` + `text` + `paragraph_count` |
+| Hotspot | `position` |
+
+**3. Text для Label/Text в geometry.** Плоская конкатенация всех параграфов
+memo через тот же helper `ReadTextFromMemo`, что использует
+`BulkGetTextsCommand`. `paragraph_count` — число параграфов.
+
+**Диагностика формата.** Для Label автотекст подставляется **до** возврата
+— в `text` приходит уже развёрнутое значение плюс литеральные `#имя`
+маркеры (у которых нет значения). Проверено: `СТН-034\r#Тип, марка,
+обозначение документа, опросного листа  аааа` — то же, что видно в UI.
+
+### BulkCloneLabels — создание text-Label по донору (2026-10-07)
+
+По образцу `BulkCloneElement`: donor + instances, один undo на батч.
+Запись текста — через существующий `TextLabelDetails::ApplyTextContent`
+(тот же путь, что CreateLabels/ModifyLabels).
+
+Payload (msgpack в `payload_b64`):
+
+```
+{
+  "sources": [ { "source_guid": "<donor-label-guid>",
+                 "instances": [ ... ] }, ... ]
+}
+// ИЛИ одиночный донор
+{ "source_guid": "...", "instances": [ ... ] }
+
+// Instance:
+{
+  "beg_x": 1.0, "beg_y": 2.0,       // лидер-линия: начало (обязательно)
+  "mid_x": 1.5, "mid_y": 2.5,       // изгиб (опционально)
+  "end_x": 2.0, "end_y": 3.0,       // конец (опционально)
+  "text":  "новый текст",            // опционально — перезапись memo
+  "owner_guid": "host-element-guid", // опционально — к чему привязать
+  "story_index": 0, "layer_index": 56 // опционально
+}
+```
+
+**Ограничения v1:**
+- Только `API_LabelID` с `labelClass=Text`. Symbol-Label → ошибка
+  (`symbol labels not supported by BulkCloneLabels (use CreateLabels)`).
+- Донор обязателен. Искусственный донор — отдельный путь, через
+  существующую `CreateLabels` с явными полями.
+- `delete_source` **не поддержан** в v1 (нужна точная сигнатура
+  `ACAPI_Element_Delete` в контексте clone). Размножение без удаления
+  источника — достаточный сценарий.
+- В каждом `per_source` — свой набор `created_guids` и `errors`.
+
+**Зачем нужна.** Массовая установка однотипных аннотаций на 500+ стен/зон
+(маркировка, примечания) — одна bulk-команда вместо N одиночных
+`CreateLabels`, один undo, один round-trip.
+
 ### CI-грабли (проверено на матрице 25/26/27/28/29)
 
 **Матрица CI — 5 версий + `/WX`** (warnings-as-errors). Любой warning
