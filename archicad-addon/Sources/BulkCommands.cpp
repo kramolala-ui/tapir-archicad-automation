@@ -21,7 +21,9 @@
 #include <set>
 #include <algorithm>
 #include <cstdint>
+#include <cstddef>
 #include <cstring>
+#include <cmath>
 
 // DevKit AC25/26 определяет `snprintf` как `_snprintf` (hack для старого
 // MSVC). nlohmann внутри использует std::snprintf — препроцессор
