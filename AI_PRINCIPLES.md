@@ -1920,15 +1920,18 @@ symbol`. Дедуп сделан через большой replace с якоре
 
 **Не проверено (нужны условия):**
 
-- `BulkGetElementMesh` — требует **открытого 3D-окна** в Archicad.
-  В FloorPlan вызов `ACAPI_3D_GetCurrentWindowSight` роняет Archicad
-  (не возвращает nullptr, а крешится). Никогда не звать вслепую — только
-  когда пользователь вручную открыл 3D-вид; в Python-обёртке
-  `ensure_3d_window=True` переключает окно через
-  `TapirConnection.change_window('3DModel')`.
 - `BulkGetElementData` с `selected=true` — возвращает пустой ответ на
   AC26. Возможно, параметр поддержан в более новых сборках.
 - `RotateElementsByAngle` (форк-команда) — ждёт свежий .apx.
+
+**Устаревшее (архив):**
+
+- `BulkGetElementMesh` — старая заметка про «крешит в FloorPlan»
+  относится к версии через SightPtr + `EXPGetModel`. В 2026-10-07
+  команда переписана на низкоуровневый component-API
+  (`ACAPI_ModelAccess_Get3DInfo` + `GetComponent`), 3D-окно больше
+  не требуется. Подробности — в `ExtractElementMesh` в
+  `BulkCommands.cpp`. См. §4f, таблицу реестра.
 
 **Локальный путь .apx (AC26, Win):**
 `C:\Program Files\GRAPHISOFT\Archicad 26\Расширения Archicad\TapirAddOn_AC26_Win.apx`.
