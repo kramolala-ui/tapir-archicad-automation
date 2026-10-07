@@ -913,6 +913,15 @@ const char* ElementTypeName (API_ElemTypeID t)
         case API_HatchID:        return "Hatch";
         case API_DrawingID:      return "Drawing";
         case API_CutPlaneID:     return "CutPlane";
+        case API_LineID:         return "Line";
+        case API_PolyLineID:     return "PolyLine";
+        case API_ArcID:          return "Arc";
+        case API_CircleID:       return "Circle";
+        case API_SplineID:       return "Spline";
+        case API_HotspotID:      return "Hotspot";
+        case API_ChangeMarkerID: return "ChangeMarker";
+        case API_DetailID:       return "Detail";
+        case API_WorksheetID:    return "Worksheet";
         default:                 return "Unknown";
     }
 }
