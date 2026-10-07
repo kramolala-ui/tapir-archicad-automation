@@ -2133,9 +2133,12 @@ GS::ObjectState BulkCloneLabelsCommand::Execute (
                         if (ACAPI_Element_GetHeader (&ownerHdr) == NoError) {
                             el.label.parent = ownerGuid;
 #ifdef ServerMainVers_2600
+                            // AC26+: parentType — API_ElemType (struct).
                             el.label.parentType = ownerHdr.type;
 #else
-                            el.label.parentType.typeID = ownerHdr.typeID;
+                            // AC25: parentType — API_ElemTypeID (простой enum),
+                            // у него нет поля .typeID. Присваиваем enum в enum.
+                            el.label.parentType = ownerHdr.typeID;
 #endif
                         }
                     }
