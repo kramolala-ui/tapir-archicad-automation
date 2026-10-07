@@ -1343,7 +1343,7 @@ GSErrCode Initialize (void)
         );
         err |= RegisterCommand<BulkSetTextsCommand> (
             bulkCommands, "1.0.0",
-            "Bulk write of text content into many Text/Label elements at once via msgpack+zstd. Input payload: {rows: [{elementId, text}]}. Output payload: {updated, total, errors}. Reuses SetTextContentAndParagraphs (same code path as CreateTexts/ModifyTexts)."
+            "Bulk write of text content into many Text/Label elements at once via msgpack+zstd. Input payload: {rows: [{elementId, text}]}. Output payload: {updated, total, errors}. Reuses TextLabelDetails::ApplyTextContent (same code path as CreateTexts/ModifyTexts/ModifyLabels)."
         );
         err |= RegisterCommand<BulkFindReplaceTextCommand> (
             bulkCommands, "1.0.0",
