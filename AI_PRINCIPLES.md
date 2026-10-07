@@ -1681,63 +1681,145 @@ Archicad через `ACAPI_ElementGroup_GetGroup` (element → parent) и
 
 Исходник — `archicad-addon/Sources/BulkCommands.hpp/.cpp`.
 
-### BulkGetElementMesh — работает, но только на AC26
+### BulkGetElementMesh — component-API, работает на AC25/AC26 (2026-10-07)
 
-**Что пробовали и почему не вышло.** Через `ACAPI_3D_GetComponent`
-mesh получить нельзя: у `API_BodyType` только счётчики (nVert / nPgon /
-nEdge / nPedg / nVect) и bbox, но **нет** диапазонов индексов
-(`fvert / lvert / fpgon / lpgon` — таких полей в DevKit нет).
+**Что работает (актуальный путь).** Низкоуровневый 3D-component API:
 
-**Что работает (реализовано).** ModelerAPI через Sight:
+    1. ACAPI_ModelAccess_Get3DInfo(elemHead, &info3D)
+       — диапазон тел [fbody..lbody]. НЕ требует открытого 3D-окна.
+    2. Для каждого тела iBody:
+         ACAPI_ModelAccess_GetComponent(API_BodyID, iBody)
+           → nVert, nPgon, nPedg, nEdge, tranmat
+         API_VertID 1..nVert    → (x, y, z) локальные
+         API_PgonID 1..nPgon    → fpedg, lpedg, status
+         API_PedgID fpedg..lpedg→ pedg (знак = направление ребра)
+         API_EdgeID abs(pedg)   → vert1, vert2
+    3. Триангуляция — ear-clipping по контуру полигона.
 
-    1. ACAPI_3D_GetCurrentWindowSight(void** sightPtr)
-       — Sight активного 3D-окна. Требует ОТКРЫТОГО 3D-вида.
-    2. void* → Modeler::SightPtr:
-           auto* p = static_cast<Modeler::SightPtr*>(sightRaw);
-           Modeler::SightPtr sight = *p;
-    3. GS::Owner<Modeler::IAttributeReader> attrReader (
-           ACAPI_Attribute_GetCurrentAttributeSetReader ());
-       ModelerAPI::Model model;
-       EXPGetModel (sight, &model, attrReader.Get ());
-    4. Обход (все индексы 1-based):
-           for iElem=1..GetElementCount()
-             model.GetElement(iElem, &element)
-             if element.GetElemGuid() != target: continue
-             for iBody=1..element.GetTessellatedBodyCount()
-               element.GetTessellatedBody(iBody, &body)
-               for iPgon=1..body.GetPolygonCount()
-                 body.GetPolygon(iPgon, &polygon)
-                 for iCvx=1..polygon.GetConvexPolygonCount()
-                   polygon.GetConvexPolygon(iCvx, &convex)
-                   for iPedge=1..convex.GetVertexCount()
-                     idx = convex.GetVertexIndex(iPedge)
-                     body.GetVertex(idx, &vertex) → x/y/z
+Все индексы компонент у ACAPI 1-based (body, vert, pgon, pedg, edge).
+В outVertices/outTriangles — 0-based (стандарт GL / VTK / ifcopenshell).
 
 **Дедупликация вершин обязательна.** Одна вершина в нескольких
-полигонах. Без remap — дубликаты и кривые нормали. Ключ:
-`(bodyIdx << 32) | localVertexIndex`. Fan-триангуляция:
-`(v0, vi, vi+1)` для `i=1..n-2`. **Индексы для mesh — 0-based**
-(стандарт GL / VTK / ifcopenshell).
+полигонах. Ключ remap: `(bodyIdx << 32) | localVertexIndex`.
 
-**⚠ Компилируется только на AC26.** На AC25 / 27 / 28 / 29
-`ACAPI_3D_GetCurrentWindowSight` НЕ объявлена (error C3861), а на AC29
-вдобавок `Model.hpp` ломает `GDL/PropertyListImp.hpp` (каскад
-C2039/C3083). Весь mesh-код обёрнут в `#if defined (ServerMainVers_2600)`.
-На остальных версиях команда возвращает `errOut = "mesh not supported
-on this Archicad version (only AC26 for now)"` — сборка зелёная,
-команда регистрируется, но данных нет.
+**applyTransform=true**: к координатам вершин применяется `body.tranmat`
+(ACAPI-вершины идут в локальных координатах, а не в world — см. #563
+в ElementCommands.cpp:4148: bbox уже world, а вертексы — нет).
 
-**Version-aware путь для 27+** — TODO. Известные зацепки:
-- Вторая перегрузка `EXPGetModel(ConstModel3DPtr, ...)` не требует
-  SightPtr, но нужен источник `ConstModel3DPtr` без 3D-окна — не
-  найден через `ACAPI_*`.
-- Возможно, в AC27+ `ACAPI_3D_GetCurrentWindowSight` переехала в
-  другой заголовок или переименована. Проверить на DevKit 27.
+### Триангуляция — ear-clipping, не fan (2026-10-07)
 
-**Резервный путь — IFC-транспорт** (если 3D-окна нет или версия ≠ 26):
-`export_filtered_ifc(guids)` → `ifcopenshell.geom.create_shape()` →
-матчинг IFC GlobalID ↔ Archicad GUID через `archicad_sync`. Не
-реализовано, но путь открыт.
+**Проблема с fan.** Fan-триангуляция `(v0, vi, vi+1)` на невыпуклых
+полигонах даёт треугольники с противоположной ориентацией — VTK
+красит грани вразнобой (диагональные артефакты и «обращённые грани»
+на плоских панелях радиаторов, стенах, плитах).
+
+**Решение — ear-clipping + нормаль через Newell:**
+
+    PolygonNormalNewell(verts, loop, n, outN)
+        — устойчива к слегка негоометричным вершинам.
+    PlaneAxesFromNormal(n, u, v)
+        — базис в плоскости полигона.
+    SignedArea2D(xs, ys, n)
+        — shoelace, знак обхода контура.
+    EarClip2D(xs, ys, outLocalTris)
+        — O(n²) на полигон; для стен/плит 6-8 вершин — мгновенно.
+    TriangulatePolygon(verts, contourGlobal, outTriangles)
+        — оркестратор: Newell → проекция → при CW reverse →
+          ear-clipping → запись в outTriangles.
+
+**Fallback.** Если ear-clipping встал (вырожденный / самопересекающийся
+контур) — возврат к fan на остатке. Полигон не теряется.
+
+**Forward declaration.** `TriangulatePolygon` объявлена перед
+`ExtractElementMesh`, определения helper'ов — ниже в том же
+`#if !defined(ServerMainVers_2700)`-блоке.
+
+**Include'ы.** В шапку добавлены `<cmath>` (std::sqrt в Len3) и
+`<cstddef>` (ptrdiff_t в TriangulatePolygon). Раньше в файле не было
+ни одного, ни другого — не полагаемся на транзитивные include.
+
+### Баг потери первой вершины первого тела — маркер 0 (2026-10-07)
+
+**Симптом.** Object и Zone возвращали `8 vertexCount / 9 triangleCount
+/ 3 boundary edges` вместо `8 / 12 / 0`. Одна и та же грань бокса
+(рёбра 1-3, 1-4, 3-4) отсутствовала у обоих типов.
+
+**Причина.** `localToGlobal` инициализировался `0` как маркер «вершина
+не задана». Но индекс 0 валиден: для первой вершины первого тела
+`outVertices.size() = 0` до push_back, `globalIdx = 0`. Проверка
+`if (gv1 == 0 || gv2 == 0) continue;` отсеивала все рёбра, инцидентные
+v0.
+
+**Фикс.** Маркер заменён на `UINT32_MAX` (`kInvalidIdx`). Проверка —
+`gv == kInvalidIdx`. Меш никогда не содержит 4 миллиарда вершин,
+конфликта с реальными индексами нет.
+
+**Результат.** 12 triangles / 0 boundary edges для Object и Zone.
+Watertight. Крупные полигоны (стены, плиты, тела фитингов, цилиндры)
+без артефактов.
+
+### Zone — через polygonOutline + extrude, НЕ через ACAPI mesh (2026-10-07)
+
+**Почему.** Даже после фикса v0 ACAPI mesh для Zone теряет данные —
+у Zone нет настоящего solid-body, `Get3DInfo` возвращает неполный
+набор полигонов. Правильный источник — официальный `GetDetailsOfElements`:
+
+    d = GetDetailsOfElements(guid)['details']
+    d['polygonOutline']  — 2D-контур зоны, N точек (последняя = первая)
+    d['holes']           — список дырок (пока не поддерживаем)
+    d['zCoordinate']     — низ зоны (обычно 0)
+
+Высота зоны (z_max) берётся из mesh-канала (bbox по Z). Контур
+триангулируется `vtkContourTriangulator` (через `pv.PolyData.triangulate()`),
+экструдируется на z_min..z_max, боковые стенки — quad-ы.
+
+**Ориентация контура.** `polygonOutline` из Archicad может приходить
+CW — нормали верх/низ смотрели бы внутрь. Shoelace → reverse при CW:
+верх CCW (+Z наружу), низ CW (−Z наружу).
+
+**Клиентский контракт.** См. `tools/_archicad_realtime_helpers.py`:
+`fetch_zone_outlines(tapir, guids)` + `zone_mesh_from_outline(outline, z_min, z_max)`.
+
+### Positional matching для GetDetailsOfElements / Get3DBoundingBoxes
+
+**GetDetailsOfElements НЕ возвращает GUID в ответе.** Только
+человекочитаемый `id` (например `'ЗОН-003'`), `floorIndex`,
+`layerIndex`, `drawIndex`. `detailsOfElements` приходит в том же
+порядке, что `elements` в запросе → матчим ПОЗИЦИОННО.
+
+**Get3DBoundingBoxes** — та же история: `elementId` в ответе — номер,
+не GUID; элементы идут в порядке запроса.
+
+Это видно и в существующих нодах: `archicad_get_element_details`,
+`archicad_get_connected_elements` (см. `core/operations/commands/
+archicad_commands.py`) — все опираются на позиционный матчинг.
+
+### Свойства mesh-канала (проверено 2026-10-07)
+
+  • **Не зависит от активного 3D-окна.** Component API читает из
+    ACAPI-модели в памяти, не через UI. SightPtr (ModelerAPI) — ушли
+    из-за крашей на AC26.
+  • **Не зависит от видимости слоёв.** `GetElementsByType` возвращает
+    все элементы независимо от layer visibility и layer combination.
+  • **Требует построенного 3D-кеша.** Один раз переключиться в 3D-вид,
+    дать Archicad просчитать модель. Дальше — хоть на плане.
+
+### GUID-нормализация в C++ — TODO при следующей сборке
+
+**Проблема.** `BulkGetElementMesh` возвращает `elementId` в том
+регистре, в каком он был передан на вход. `GetDetailsOfElements` и
+`BulkGetElementData` — в UPPERCASE. На Python-стороне приходится
+делать `.upper()` при сравнении ключей (уже сделано в
+`_archicad_realtime_helpers.py`).
+
+**Фикс (при следующей сборке).** В `BulkGetElementMesh::Execute`
+(и, если есть, в аналогичных read-командах) — нормализовать
+`row["elementId"]` через `APIGuidToString(guid)` вместо
+`guidStr` из запроса. Это даст канонический UPPER автоматически.
+
+**Не блокирует текущую работу** — `.upper()` на Python-стороне решает
+проблему. Фикс — для чистоты контракта, убирает класс багов «два
+источника — два регистра».
 
 ### Ключевые API-факты (для будущих команд)
 
