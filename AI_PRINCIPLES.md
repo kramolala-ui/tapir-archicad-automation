@@ -785,15 +785,20 @@ AddOn, не наш баг. Для MEP — обход через `spatial_query` 
   Отдельным патчем после обкатки `with_data` — `BulkGetElementData::Execute`
   становится тонкой обёрткой (`парсинг payload → CollectElementData →
   envelope`).
-- **`BulkSetTexts` — баг `-2130313112`.** Запись через `ACAPI_Element_Change`
-  падает на AC26 с этой ошибкой. Маски Text/charCode под
-  `#ifndef ServerMainVers_2800` пробовали менять порядок — не помогло.
-  Отдельная задача.
+- **`BulkSetTexts` — патч отправлен 2026-10-07, не собран.** Замена
+  `SetTextContentAndParagraphs` на `TextLabelDetails::ApplyTextContent`
+  (тот же путь, что `ModifyTexts` / `ModifyLabels` /
+  `SetDetailsOfElements`). Ждёт CI + живой тест. Корень проблемы — в
+  старом пути memo не заполняется `(*memo.paragraphs)[0].just`, и на
+  AC26 `ACAPI_Element_Change` отбивает его как `APIERR_BADPARS`.
+- **`BulkGetGroupMembers`: `source_guids=[]` для элементов без группы.**
+  Сейчас поля отсутствуют. Косметика.
 - **`BulkSetDetails`** — обёртка над upstream `SetDetailsOfElements`
   (типовые поля Wall/Slab/Zone, не покрытые `BulkSetElementData`).
-- **Python-обёртка `BulkConnection`** в IFC_analyzer — расширить под
-  Move/Rotate/SetElementData/Delete/GetGroupMembers-with-data (см. §4e
-  про текущий набор).
+  Пока не начата.
+- **Python-обёртка `BulkConnection`** в IFC_analyzer — **расширена**
+  2026-10-07 под Move/Rotate/SetElementData/Delete/GetGroupMembers.
+  Осталось: публичный `call()` для эскейп-хэтча и TypedDicts.
 
 **История §4c.** Раздел с номером 4c в файле отсутствует (сразу 4d —
 нумерационный пропуск). Не трогаем — так исторически.
