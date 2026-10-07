@@ -1196,15 +1196,44 @@ nlohmann::ordered_json CollectElementData (const ElementDataOptions& opts)
         // ---- connected ----
         if (!opts.connectedTypes.empty ()) {
             bool anyConn = false;
+            const bool ownerIsZone = (GetElemTypeId (element.header) == API_ZoneID);
             for (API_ElemTypeID t : opts.connectedTypes) {
                 GS::Array<API_Guid> connectedElements;
-                if (ACAPI_Grouping_GetConnectedElements (guid, t, &connectedElements) != NoError) continue;
+
+                if (ownerIsZone) {
+                    // Zone: ACAPI_Grouping_GetConnectedElements не работает на AC26
+                    // (проверено 2026-10-07: и Object, и Zone дают 0 рёбер).
+                    // Используем ACAPI_Element_GetRelations + API_RoomRelation —
+                    // та же логика, что в GetRelationsOfElementsCommand (ElementCommands.cpp).
+                    API_RoomRelation relation = {};
+                    API_ElemType other;
+                    other.typeID = t;
+                    if (ACAPI_Element_GetRelations (guid, other, &relation) == NoError) {
+                        relation.elementsGroupedByType.Enumerate (
+                            [&] (const API_ElemType& et, const GS::Array<API_Guid>& arr) {
+                                if (et.typeID != t) return;
+                                for (const API_Guid& g : arr) connectedElements.Push (g);
+                            });
+                    }
+                    ACAPI_DisposeRoomRelationHdls (&relation);
+                } else {
+                    if (ACAPI_Grouping_GetConnectedElements (guid, t, &connectedElements) != NoError) continue;
+                }
+
                 for (const API_Guid& toGuid : connectedElements) {
                     nlohmann::ordered_json rel;
                     rel["from_guid"] = guidStr;
                     rel["to_guid"]   = APIGuidToString (toGuid).ToCStr ().Get ();
-                    rel["kind"]      = "connected_to";
-                    rel["via"]       = ElementTypeName (t);
+
+                    // kind по паре (owner_type, target_type).
+                    std::string kind = "connected_to";
+                    if (ownerIsZone) {
+                        if      (t == API_ObjectID) kind = "zone_content";
+                        else if (t == API_ZoneID)   kind = "zone_neighbour";
+                        else                        kind = "zone_boundary";
+                    }
+                    rel["kind"] = kind;
+                    rel["via"]  = ElementTypeName (t);
                     out["relations"].push_back (rel);
                     anyConn = true;
                 }
