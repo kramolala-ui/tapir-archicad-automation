@@ -1839,7 +1839,9 @@ GS::ObjectState BulkGetElementDataCommand::Execute (
                 GS::Array<API_Guid> connectedElements;
 
                 if (ownerIsZone) {
+#ifdef ServerMainVers_2600
                     // Zone: Grouping не работает на AC26, см. комментарий в CollectElementData.
+                    // API_ElemType и GetRelations — только с AC26.
                     API_RoomRelation relation = {};
                     API_ElemType other;
                     other.typeID = t;
@@ -1851,6 +1853,9 @@ GS::ObjectState BulkGetElementDataCommand::Execute (
                             });
                     }
                     ACAPI_DisposeRoomRelationHdls (&relation);
+#else
+                    // AC25: см. CollectElementData — connectedElements пустое.
+#endif
                 } else {
                     if (ACAPI_Grouping_GetConnectedElements (guid, t, &connectedElements) != NoError) continue;
                 }
