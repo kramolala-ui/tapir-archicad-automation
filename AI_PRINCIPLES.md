@@ -668,7 +668,7 @@ JSON-стена или серия вызовов.
   рвёт батч.
 - `compression` — `"none"` или `"zstd"`; передаётся в оба конца.
 
-### Реестр 13 команд
+### Реестр 14 команд
 
 | # | Команда | R/W | Версия AC | Назначение | Проверено вживую |
 |---|---|---|---|---|---|
@@ -677,14 +677,15 @@ JSON-стена или серия вызовов.
 | 3 | `BulkGetTexts` | R | 25–29 | Тексты Text/Label | ✅ 2026-10-07 |
 | 4 | `BulkSetTexts` | W | 25–29 | Запись текста | ⚠ патч на `ApplyTextContent` отправлен, ждёт сборки |
 | 5 | `BulkFindReplaceText` | W | 25–29 | Find/replace, `dry_run` | ✅ 2026-10-07 (dry_run) |
-| 6 | `BulkGetElementMesh` | R | **26 only** | Меш через ModelerAPI (`TAPIR_AC26_ONLY`) | не гонялся |
-| 7 | `BulkGetElementData` | R | 25–29 | details/bbox/props/GDL/class/relations | ✅ 2026-10-07 |
+| 6 | `BulkGetElementMesh` | R | **25–26** | Меш через component-API (`Get3DInfo` + `GetComponent`) | ✅ 2026-10-07 (3D-окно не нужно) |
+| 7 | `BulkGetElementData` | R | 25–29 | details/bbox/props/GDL/class/relations/**2D-geometry** | ✅ 2026-10-07 |
 | 8 | `BulkGetGroupMembers` | R | 25–29 | Нативная группа (Ctrl+G) + `with_data=true` | ✅ 2026-10-07 (37 entity одним вызовом) |
 | 9 | `BulkCloneElement` v2 | W | 25–29 | Копирование доноров из `sources[]` | ✅ 2026-10-07 |
 | 10 | `BulkMoveElements` | W | 25–29 | Перенос по вектору (dx,dy,dz) | ✅ 2026-10-07 (Δx = 5.0 ровно) |
 | 11 | `BulkRotateElements` | W | 25–29 | Поворот вокруг центра (по умолчанию — центр AABB) | ✅ 2026-10-07 (bbox 4.19/1.91→1.91/4.19) |
 | 12 | `BulkSetElementData` | W | 25–29 | Универсальная запись: element+GDL+Archicad+class | ✅ 2026-10-07 (4/4 категории) |
 | 13 | `BulkDeleteElements` | W | 25–29 | Массовое удаление одним `ACAPI_Element_Delete` | ✅ 2026-10-07 |
+| 14 | `BulkCloneLabels` | W | 25–29 | Создание text-Label по донору + `instances[]` | ✅ 2026-10-07 (см. отдельный подраздел) |
 
 ### Общие хелперы (`BulkCommands.cpp`)
 
