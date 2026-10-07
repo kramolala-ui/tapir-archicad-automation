@@ -3878,7 +3878,7 @@ GSErrCode ApplyPropertyBatch (const API_Guid& elemGuid,
             GS::UniString* wanted = valuesByGuid.GetPtr (vp.definition.guid);
             if (wanted == nullptr) continue;
             GS::UniString current;
-            if (ACAPI_Property_GetPropertyValueString (vp, conversionUtils, &current) != NoError
+            if (ACAPI_Property_GetPropertyValueString (vp, &current) != NoError
                 || current != *wanted)
             {
                 notAppliedOut.push_back (vp.definition.guid);
