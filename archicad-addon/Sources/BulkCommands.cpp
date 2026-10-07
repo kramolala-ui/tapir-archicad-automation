@@ -2385,7 +2385,11 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
                 if (v1 <= 0 || v1 > nVert || v2 <= 0 || v2 > nVert) continue;
                 const uint32_t gv1 = localToGlobal[static_cast<size_t> (v1)];
                 const uint32_t gv2 = localToGlobal[static_cast<size_t> (v2)];
-                if (gv1 == 0 || gv2 == 0) continue;
+                // kInvalidIdx = UINT32_MAX (маркер "вершина не задана").
+                // Раньше стоял 0, но 0 — валидный индекс первой вершины
+                // первого тела → все её рёбра терялись (см. комментарий
+                // при объявлении localToGlobal).
+                if (gv1 == kInvalidIdx || gv2 == kInvalidIdx) continue;
 
                 if (polyIdx.empty ()) polyIdx.push_back (gv1);
                 if (polyIdx.back () != gv2) polyIdx.push_back (gv2);
