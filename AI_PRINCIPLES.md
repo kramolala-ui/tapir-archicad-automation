@@ -1809,33 +1809,40 @@ symbol`. Дедуп сделан через большой replace с якоре
 Живой прогон через `BulkConnection` (IFC_analyzer) на проекте
 «Шаблон гидравлики IFC», Tapir 1.7.1, порт 19724, .apx от 20:21.
 
-**Read-канал — подтверждён:**
+**Проверено вживую 2026-10-07 (AC26, «Шаблон гидравлики IFC»):**
 
 | Команда | Сценарий | Результат |
 |---|---|---|
-| `BulkPing` | 'hello', 5 байт | ✅ 2 ms, `zstd_version=10506` |
-| `BulkGetPropertyValues` | 100×10 = 1000 значений | ✅ 42 ms, 878 filled |
-| `BulkGetPropertyValues` | серия 3×50×10 (главный баг JSON-пути) | ✅ все <25 ms, Archicad не виснет |
-| `BulkGetTexts` | 1006 элементов (487 Text + 519 Label) | ✅ 560 ms, все непустые |
-| `BulkGetElementData` V2 | 1 Object, all sections | ✅ 15 ms, params: GDL/*, bbox_*, class/*, object_*, story_index, layer_index, object_lib_part_name |
-| `BulkGetGroupMembers` | 35 элементов одной группы | ✅ 17 ms, 35 members, единый group_guid |
+| `BulkPing` | 'hello-bulk', 10 байт | ✅ `size=10`, `zstd_version=10506` |
+| `BulkGetTexts` | 20 Text + 20 Label | ✅ 40 строк, 40 непустых |
+| `BulkGetPropertyValues` | 4 элемента × 3 свойства | ✅ OK |
+| `BulkFindReplaceText` (dry_run) | 1006 scanned по 5 подстрокам | ✅ 60/23/42/131/88 matched, replaced=0 |
+| `BulkGetElementData` V2 | 3 Object, all sections | ✅ bbox + GDL + properties + classifications |
+| `BulkGetGroupMembers` (без data) | 1 выделенный Object | ✅ 1 запись, 37 `member_guids`, единый `group_guid` |
+| `BulkGetGroupMembers with_data=true` | та же группа, 37 членов | ✅ 37 entity в одном round-trip, `details+bbox+gdl`, 152–172 params (130–150 GDL), missing=0 |
+| `BulkSetElementData` (dry_run) | 2 Object, `story_index` + `bbox_size_x` + `foo_bar` | ✅ `applied=[story_index]`, `ignored_readonly=[bbox_size_x]`, `ignored_unknown=[foo_bar]` |
+| `BulkCloneElement` v2 | 1 Object → 2 клона | ✅ 2 `created_guids`, `per_source` с `errors=[]` |
+| `BulkMoveElements` | dx=+5.0 | ✅ `moved_count=1`, Δx = 5.0 ровно |
+| `BulkRotateElements` | angle_rad=π/2 | ✅ `rotated_count=1`, bbox_size 4.19/1.91 → 1.91/4.19 |
+| `BulkDeleteElements` | те же 2 клона | ✅ `deleted_count=2`, после — оба `element not found` |
+| `BulkSetTexts` | no-op `'2'→'2'` | ⚠ `-2130313112` — ждёт сборки патча |
 
-**Три бага (не блокеры read-канала):**
+**Открытые баги (write-канал):**
 
-1. **`BulkGetTexts` — байтовый своп в части Text.** Часть объектов возвращает
-   текст в big-endian UTF-16: `'2'` читается корректно (однобайтный), а
-   `"2544"` приходит как `'㐲㔴'` (`\u3425\u3434`, байты свапнуты).
-   Причина — AC26 API `GetMemo(APIMemoMask_TextContent)` не всегда отдаёт
-   content в LE. Не наш баг сборки. Обход — проверять на принадлежность
-   BMP или нормализовать (TODO).
-2. **`BulkGetGroupMembers` — `groups_count=0` в ответе** при 35 фактически
-   возвращённых группах. Косметика: в C++ `Execute` заполняется
-   `out["groups"]`, но не считается `groups_count`.
-3. **`BulkSetTexts` — регрессия на текущем .apx (20:21).** no-op `'2'→'2'`,
-   swap `'2'→'9'`, restore — все падают с `-2130313112` (change failed).
-   По §9 (те же замеры до WIP-правок) было 50/50 успешно, 89 ms.
-   Проверить после свежей сборки — возможно, регрессия из WIP-правок
-   BulkCloneElement или dedup; если нет — лечить в `BulkSetTexts::Execute`.
+1. **`BulkSetTexts`.** Патч на `TextLabelDetails::ApplyTextContent` отправлен
+   2026-10-07, но не собран/установлен. Корень: старая
+   `SetTextContentAndParagraphs` не заполняет `(*memo.paragraphs)[0].just`
+   — AC26 `ACAPI_Element_Change` отбивает memo как `APIERR_BADPARS`.
+   См. §4f, бэклог.
+
+**Закрытые баги:**
+
+- `BulkGetGroupMembers` `groups_count=0` — исправлен: теперь считается
+  как `out["groups"].size()` (после дедупа по `group_guid`), не как размер
+  входного `group_guids[]`.
+- `BulkGetGroupMembers` дубликаты записей — исправлено: дедуп по
+  `group_guid`, все источники одной группы собираются в одну запись с
+  массивами `source_guids[]` / `source_kinds[]`.
 
 **Не проверено (нужны условия):**
 
@@ -1847,8 +1854,6 @@ symbol`. Дедуп сделан через большой replace с якоре
   `TapirConnection.change_window('3DModel')`.
 - `BulkGetElementData` с `selected=true` — возвращает пустой ответ на
   AC26. Возможно, параметр поддержан в более новых сборках.
-- `BulkFindReplaceText` (dry_run), `BulkCloneElement` — ждут свежий
-  .apx, чтобы отделить регрессию write-пути от логики команд.
 - `RotateElementsByAngle` (форк-команда) — ждёт свежий .apx.
 
 **Локальный путь .apx (AC26, Win):**
