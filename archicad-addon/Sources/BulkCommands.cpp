@@ -1909,6 +1909,272 @@ GS::ObjectState BulkGetElementDataCommand::Execute (
 
 
 // ---------------------------------------------------------------------
+//  BulkCloneLabelsCommand
+// ---------------------------------------------------------------------
+//
+// Массовое создание текстовых выносок (Label, labelClass=Text) по донору.
+// Payload (msgpack в payload_b64) — по образцу BulkCloneElement:
+//
+//   { "sources":       [ { "source_guid": "donor-label-guid",
+//                          "instances":   [ ... ] }, ... ] }
+//   ИЛИ
+//   { "source_guid":   "donor-label-guid",
+//     "instances":     [ ... ] }
+//
+// Instance:
+//   { "beg_x": 1.0, "beg_y": 2.0,       // лидер-линия: начало
+//     "mid_x": 1.5, "mid_y": 2.5,       // изгиб (опц.)
+//     "end_x": 2.0, "end_y": 3.0,       // конец (опц.)
+//     "text":  "текст",                 // опц. — если задан, пересобираем memo через ApplyTextContent
+//     "owner_guid": "host-element-guid", // опц. — к чему привязать (по умолчанию как у донора)
+//     "story_index": 0, "layer_index": 56 }  // опц.
+//
+// Donor должен быть API_LabelID + labelClass=Text. Для Symbol-выносок — ошибка
+// (используйте индивидуальную CreateLabels с явными полями).
+
+BulkCloneLabelsCommand::BulkCloneLabelsCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkCloneLabelsCommand::GetName () const
+{
+    return "BulkCloneLabels";
+}
+
+GS::Optional<GS::UniString> BulkCloneLabelsCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkCloneLabelsCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64":   { "type": "string"  },
+            "compression":   { "type": "string"  },
+            "sources_count": { "type": "integer" },
+            "created_count": { "type": "integer" },
+            "errors_count":  { "type": "integer" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkCloneLabelsCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    struct SourceTask {
+        std::string sourceGuid;
+        std::vector<nlohmann::ordered_json> instances;
+    };
+    std::vector<SourceTask> sources;
+
+    try {
+        nlohmann::json j = nlohmann::json::from_msgpack (raw);
+        if (j.contains ("sources")) {
+            for (const auto& s : j["sources"]) {
+                if (!s.contains ("source_guid") || !s.contains ("instances")) {
+                    return CreateErrorResponse (APIERR_BADPARS,
+                        "'sources[i]' must contain 'source_guid' and 'instances'");
+                }
+                SourceTask t;
+                t.sourceGuid = s["source_guid"].get<std::string> ();
+                for (const auto& inst : s["instances"]) t.instances.push_back (inst);
+                sources.push_back (t);
+            }
+        } else if (j.contains ("source_guid") && j.contains ("instances")) {
+            SourceTask t;
+            t.sourceGuid = j["source_guid"].get<std::string> ();
+            for (const auto& inst : j["instances"]) t.instances.push_back (inst);
+            sources.push_back (t);
+        } else {
+            return CreateErrorResponse (APIERR_BADPARS,
+                "payload must contain either 'sources' array, or 'source_guid' + 'instances'");
+        }
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+
+    nlohmann::ordered_json out;
+    out["per_source"]    = nlohmann::json::array ();
+    out["created_guids"] = nlohmann::json::array ();
+    out["errors"]        = nlohmann::json::array ();
+
+    size_t createdCount = 0;
+    size_t errorsCount  = 0;
+
+    ACAPI_CallUndoableCommand ("BulkCloneLabels", [&] () -> GSErrCode {
+        constexpr UInt64 kAllMemoMask = APIMemoMask_All;
+        for (const SourceTask& task : sources) {
+            nlohmann::ordered_json srcOut;
+            srcOut["source_guid"]   = task.sourceGuid;
+            srcOut["created_guids"] = nlohmann::json::array ();
+            srcOut["errors"]        = nlohmann::json::array ();
+
+            API_Guid srcGuid = APIGuidFromString (task.sourceGuid.c_str ());
+            if (srcGuid == APINULLGuid) {
+                nlohmann::ordered_json e; e["msg"] = "source_guid is invalid";
+                srcOut["errors"].push_back (e); ++errorsCount;
+                out["per_source"].push_back (srcOut);
+                continue;
+            }
+            API_Element srcElem = {};
+            srcElem.header.guid = srcGuid;
+            if (ACAPI_Element_Get (&srcElem) != NoError) {
+                nlohmann::ordered_json e; e["msg"] = "source element not found";
+                srcOut["errors"].push_back (e); ++errorsCount;
+                out["per_source"].push_back (srcOut);
+                continue;
+            }
+            if (GetElemTypeId (srcElem.header) != API_LabelID) {
+                nlohmann::ordered_json e; e["msg"] = "BulkCloneLabels supports only Label source";
+                srcOut["errors"].push_back (e); ++errorsCount;
+                out["per_source"].push_back (srcOut);
+                continue;
+            }
+            if (srcElem.label.labelClass == APILblClass_Symbol) {
+                nlohmann::ordered_json e;
+                e["msg"] = "symbol labels not supported by BulkCloneLabels (use CreateLabels); only text labels";
+                srcOut["errors"].push_back (e); ++errorsCount;
+                out["per_source"].push_back (srcOut);
+                continue;
+            }
+
+            for (size_t i = 0; i < task.instances.size (); ++i) {
+                const auto& inst = task.instances[i];
+                API_Element el = srcElem;
+                el.header.guid = APINullGuid;
+                el.header.modiStamp = 0;
+                el.header.groupGuid = APINullGuid;
+
+                if (inst.contains ("story_index"))
+                    el.header.floorInd = static_cast<short> (inst["story_index"].get<int> ());
+                if (inst.contains ("layer_index"))
+                    el.header.layer = ACAPI_CreateAttributeIndex (inst["layer_index"].get<Int32> ());
+
+                if (inst.contains ("beg_x")) el.label.begC.x = inst["beg_x"].get<double> ();
+                if (inst.contains ("beg_y")) el.label.begC.y = inst["beg_y"].get<double> ();
+                if (inst.contains ("mid_x")) el.label.midC.x = inst["mid_x"].get<double> ();
+                if (inst.contains ("mid_y")) el.label.midC.y = inst["mid_y"].get<double> ();
+                if (inst.contains ("end_x")) el.label.endC.x = inst["end_x"].get<double> ();
+                if (inst.contains ("end_y")) el.label.endC.y = inst["end_y"].get<double> ();
+
+                if (inst.contains ("owner_guid")) {
+                    const std::string ownerStr = inst["owner_guid"].get<std::string> ();
+                    const API_Guid ownerGuid = APIGuidFromString (ownerStr.c_str ());
+                    if (ownerGuid != APINULLGuid) {
+                        API_Elem_Head ownerHdr = {};
+                        ownerHdr.guid = ownerGuid;
+                        if (ACAPI_Element_GetHeader (&ownerHdr) == NoError) {
+                            el.label.parent = ownerGuid;
+#ifdef ServerMainVers_2600
+                            el.label.parentType = ownerHdr.type;
+#else
+                            el.label.parentType.typeID = ownerHdr.typeID;
+#endif
+                        }
+                    }
+                }
+
+                API_ElementMemo memo = {};
+                const bool hasText = inst.contains ("text") && inst["text"].is_string ();
+                if (hasText) {
+                    // Свежий memo (не от донора) — иначе можем зацепить старый textContent.
+                    GS::ObjectState contentParams;
+                    contentParams.Add ("text", GS::UniString (inst["text"].get<std::string> ().c_str ()));
+                    const auto contentErr = TextLabelDetails::ApplyTextContent (memo, el.label.u.text, contentParams);
+                    if (contentErr.HasValue ()) {
+                        nlohmann::ordered_json e;
+                        e["index"] = static_cast<int64_t> (i);
+                        e["msg"]   = "ApplyTextContent failed";
+                        srcOut["errors"].push_back (e);
+                        out["errors"].push_back (e);
+                        ++errorsCount;
+                        ACAPI_DisposeElemMemoHdls (&memo);
+                        continue;
+                    }
+                } else {
+                    // Без текста — переносим memo донора как есть.
+                    if (ACAPI_Element_GetMemo (srcGuid, &memo, kAllMemoMask) != NoError) {
+                        nlohmann::ordered_json e;
+                        e["index"] = static_cast<int64_t> (i);
+                        e["msg"]   = "failed to get memo from source";
+                        srcOut["errors"].push_back (e);
+                        out["errors"].push_back (e);
+                        ++errorsCount;
+                        ACAPI_DisposeElemMemoHdls (&memo);
+                        continue;
+                    }
+                }
+
+                const GSErrCode createErr = ACAPI_Element_Create (&el, &memo);
+                if (createErr == NoError) {
+                    const std::string g = APIGuidToString (el.header.guid).ToCStr ().Get ();
+                    srcOut["created_guids"].push_back (g);
+                    out["created_guids"].push_back (g);
+                    ++createdCount;
+                } else {
+                    nlohmann::ordered_json e;
+                    e["index"] = static_cast<int64_t> (i);
+                    e["msg"]   = "ACAPI_Element_Create failed";
+                    e["code"]  = static_cast<int64_t> (createErr);
+                    srcOut["errors"].push_back (e);
+                    out["errors"].push_back (e);
+                    ++errorsCount;
+                }
+                ACAPI_DisposeElemMemoHdls (&memo);
+            }
+
+            out["per_source"].push_back (srcOut);
+        }
+        return NoError;
+    });
+
+    out["created_count"] = static_cast<int64_t> (createdCount);
+    out["errors_count"]  = static_cast<int64_t> (errorsCount);
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 =
+        EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64",   GS::UniString (outB64.c_str ()));
+    response.Add ("compression",   GS::UniString (outCompression.c_str ()));
+    response.Add ("sources_count", static_cast<Int64> (sources.size ()));
+    response.Add ("created_count", static_cast<Int64> (createdCount));
+    response.Add ("errors_count",  static_cast<Int64> (errorsCount));
+    return response;
+}
+
+// ---------------------------------------------------------------------
 //  BulkGetElementMeshCommand
 // ---------------------------------------------------------------------
 //
