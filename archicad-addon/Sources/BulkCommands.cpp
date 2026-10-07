@@ -1820,6 +1820,11 @@ GS::ObjectState BulkGetElementDataCommand::Execute (
             if (anyConn) entity["metadata"]["aspects_loaded"].push_back ("connected");
         }
 
+        // ---- 2D geometry ----
+        if (with2DGeometry) {
+            Collect2DGeometryToJson (element, entity);
+        }
+
         // ---- mesh ----
         if (withMesh) {
             std::vector<float> vertices;
