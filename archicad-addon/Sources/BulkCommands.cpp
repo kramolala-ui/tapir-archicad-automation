@@ -1010,9 +1010,162 @@ struct ElementDataOptions {
     bool                         withBbox = true;
     bool                         withMesh = false;
     bool                         applyTransform = true;
+    bool                         with2DGeometry = false;
     bool                         withGroupInfo = true;
     bool                         withGroupMembers = false;
 };
+
+// Заполняет out["geometry"] 2D-геометрией элемента (PolyLine / Line / Arc /
+// Circle / Hatch / Label / Text / Hotspot). Имена ключей совпадают с теми,
+// что отдаёт GetDetailsOfElements — единый контракт для per-element и bulk.
+// Контуры (PolyLine/Hatch) читаются через существующий helper
+// GetPolygonsFromMemoCoords из CommandBase.hpp — без дублирования разбора.
+void Collect2DGeometryToJson (const API_Element& element, nlohmann::ordered_json& out)
+{
+    const API_ElemTypeID tid = GetElemTypeId (element.header);
+
+    auto add2D = [] (nlohmann::ordered_json& j, const API_Coord& c) {
+        nlohmann::ordered_json o;
+        o["x"] = c.x;
+        o["y"] = c.y;
+        j.push_back (o);
+    };
+
+    switch (tid) {
+        case API_PolyLineID: {
+            auto polys = GetPolygonsFromMemoCoords (element.header.guid, false);
+            if (polys.empty ()) return;
+            auto& g = out["geometry"];
+            g["type"] = "PolyLine";
+            const auto& p = polys[0];
+            for (const auto& c : p.coords) add2D (g["coordinates"], c);
+            for (const auto& a : p.arcs) {
+                nlohmann::ordered_json ao;
+                ao["begIndex"] = a.begIndex;
+                ao["endIndex"] = a.endIndex;
+                ao["arcAngle"] = a.arcAngle;
+                g["arcs"].push_back (ao);
+            }
+            g["room_separator"] = element.polyLine.roomSeparator;
+            g["line_pen_index"] = element.polyLine.linePen.penIndex;
+            g["line_type_id"]   = APIGuidToString (GetAttributeGuidFromIndex (API_LinetypeID, element.polyLine.ltypeInd)).ToCStr ().Get ();
+            g["z_coordinate"]   = static_cast<int> (element.header.floorInd);
+        } break;
+
+        case API_HatchID: {
+            auto polys = GetPolygonsFromMemoCoords (element.header.guid, false);
+            if (polys.empty ()) return;
+            auto& g = out["geometry"];
+            g["type"] = "Hatch";
+            const auto& outline = polys[0];
+            for (const auto& c : outline.coords) add2D (g["coordinates"], c);
+            for (const auto& a : outline.arcs) {
+                nlohmann::ordered_json ao;
+                ao["begIndex"] = a.begIndex;
+                ao["endIndex"] = a.endIndex;
+                ao["arcAngle"] = a.arcAngle;
+                g["arcs"].push_back (ao);
+            }
+            for (size_t hi = 1; hi < polys.size (); ++hi) {
+                nlohmann::ordered_json ho;
+                for (const auto& c : polys[hi].coords) add2D (ho["coordinates"], c);
+                for (const auto& a : polys[hi].arcs) {
+                    nlohmann::ordered_json ao;
+                    ao["begIndex"] = a.begIndex;
+                    ao["endIndex"] = a.endIndex;
+                    ao["arcAngle"] = a.arcAngle;
+                    ho["arcs"].push_back (ao);
+                }
+                g["holes"].push_back (ho);
+            }
+            g["contour_pen_index"]         = element.hatch.contPen.penIndex;
+            g["fill_pen_index"]            = element.hatch.fillPen.penIndex;
+            g["fill_background_pen_index"] = element.hatch.fillBGPen;
+            g["fill_id"]                   = APIGuidToString (GetAttributeGuidFromIndex (API_FilltypeID, element.hatch.fillInd)).ToCStr ().Get ();
+            g["building_material_id"]      = APIGuidToString (GetAttributeGuidFromIndex (API_BuildingMaterialID, element.hatch.buildingMaterial)).ToCStr ().Get ();
+            g["room_special"]              = element.hatch.roomSpecial;
+            g["show_area"]                 = element.hatch.showArea != 0;
+            g["z_coordinate"]              = static_cast<int> (element.header.floorInd);
+        } break;
+
+        case API_LineID: {
+            auto& g = out["geometry"];
+            g["type"] = "Line";
+            nlohmann::ordered_json b, e;
+            b["x"] = element.line.begC.x; b["y"] = element.line.begC.y;
+            e["x"] = element.line.endC.x; e["y"] = element.line.endC.y;
+            g["beg_coordinate"] = b;
+            g["end_coordinate"] = e;
+            g["room_separator"] = element.line.roomSeparator;
+            g["line_pen_index"] = element.line.linePen.penIndex;
+            g["line_type_id"]   = APIGuidToString (GetAttributeGuidFromIndex (API_LinetypeID, element.line.ltypeInd)).ToCStr ().Get ();
+            g["z_coordinate"]   = static_cast<int> (element.header.floorInd);
+        } break;
+
+        case API_ArcID:
+        case API_CircleID: {
+            auto& g = out["geometry"];
+            g["type"] = (tid == API_CircleID) ? "Circle" : "Arc";
+            nlohmann::ordered_json o;
+            o["x"] = element.arc.origC.x; o["y"] = element.arc.origC.y;
+            g["origin"]         = o;
+            g["radius"]         = element.arc.r;
+            g["angle"]          = element.arc.angle;
+            g["ratio"]          = element.arc.ratio;
+            g["reflected"]      = element.arc.reflected;
+            g["room_separator"] = element.arc.roomSeparator;
+            g["line_pen_index"] = element.arc.linePen.penIndex;
+            g["line_type_id"]   = APIGuidToString (GetAttributeGuidFromIndex (API_LinetypeID, element.arc.ltypeInd)).ToCStr ().Get ();
+            g["z_coordinate"]   = static_cast<int> (element.header.floorInd);
+            if (tid == API_ArcID) {
+                g["beg_angle"] = element.arc.begAng;
+                g["end_angle"] = element.arc.endAng;
+            }
+        } break;
+
+        case API_LabelID: {
+            auto& g = out["geometry"];
+            g["type"] = "Label";
+            g["label_class"] = (element.label.labelClass == APILblClass_Symbol) ? "Symbol" : "Text";
+            if (element.label.parent != APINULLGuid) {
+                g["owner_element_id"] = APIGuidToString (element.label.parent).ToCStr ().Get ();
+            }
+            nlohmann::ordered_json b, m, e;
+            b["x"] = element.label.begC.x; b["y"] = element.label.begC.y;
+            m["x"] = element.label.midC.x; m["y"] = element.label.midC.y;
+            e["x"] = element.label.endC.x; e["y"] = element.label.endC.y;
+            g["beg_coordinate"]  = b;
+            g["mid_coordinate"]  = m;
+            g["end_coordinate"]  = e;
+            g["has_leader_line"] = element.label.hasLeaderLine;
+            g["z_coordinate"]    = static_cast<int> (element.header.floorInd);
+        } break;
+
+        case API_TextID: {
+            auto& g = out["geometry"];
+            g["type"] = "Text";
+            nlohmann::ordered_json p;
+            p["x"] = element.text.loc.x; p["y"] = element.text.loc.y;
+            g["position"] = p;
+            g["angle"]    = element.text.angle;
+            g["height"]   = element.text.size;
+            g["pen"]      = static_cast<int> (element.text.pen);
+            g["z_coordinate"] = static_cast<int> (element.header.floorInd);
+        } break;
+
+        case API_HotspotID: {
+            auto& g = out["geometry"];
+            g["type"] = "Hotspot";
+            nlohmann::ordered_json p;
+            p["x"] = element.hotspot.pos.x; p["y"] = element.hotspot.pos.y;
+            g["position"] = p;
+            g["z_coordinate"] = static_cast<int> (element.header.floorInd);
+        } break;
+
+        default:
+            return;   // not a 2D element
+    }
+}
 
 nlohmann::ordered_json CollectElementData (const ElementDataOptions& opts);
 
