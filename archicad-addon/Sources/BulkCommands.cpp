@@ -1126,7 +1126,8 @@ void Collect2DGeometryToJson (const API_Element& element, nlohmann::ordered_json
         case API_LabelID: {
             auto& g = out["geometry"];
             g["type"] = "Label";
-            g["label_class"] = (element.label.labelClass == APILblClass_Symbol) ? "Symbol" : "Text";
+            const bool isTextClass = (element.label.labelClass != APILblClass_Symbol);
+            g["label_class"] = isTextClass ? "Text" : "Symbol";
             if (element.label.parent != APINULLGuid) {
                 g["owner_element_id"] = APIGuidToString (element.label.parent).ToCStr ().Get ();
             }
@@ -1139,6 +1140,31 @@ void Collect2DGeometryToJson (const API_Element& element, nlohmann::ordered_json
             g["end_coordinate"]  = e;
             g["has_leader_line"] = element.label.hasLeaderLine;
             g["z_coordinate"]    = static_cast<int> (element.header.floorInd);
+
+            // Текст читаем через тот же helper, что BulkGetTextsCommand —
+            // плоская конкатенация всех параграфов memo. Для symbol-Label
+            // текст не читаем (у него вместо этого symbolStyle).
+            if (isTextClass) {
+                API_ElementMemo memo = {};
+                GS::UniString txt;
+                int parCount = 0;
+#ifdef ServerMainVers_2800
+                const GSErrCode e2 = ACAPI_Element_GetMemo (element.header.guid, &memo,
+                    APIMemoMask_TextContent | APIMemoMask_Paragraph);
+#else
+                const GSErrCode e2 = ACAPI_Element_GetMemo (element.header.guid, &memo,
+                    APIMemoMask_TextContentUni | APIMemoMask_ParagraphUni);
+#endif
+                if (e2 == NoError) {
+                    txt = ReadTextFromMemo (memo);
+                    if (memo.paragraphs != nullptr) {
+                        parCount = static_cast<int> (BMGetHandleSize (reinterpret_cast<GSHandle> (memo.paragraphs)) / sizeof (API_ParagraphType));
+                    }
+                }
+                ACAPI_DisposeElemMemoHdls (&memo);
+                g["text"]            = txt.ToCStr ().Get ();
+                g["paragraph_count"] = parCount;
+            }
         } break;
 
         case API_TextID: {
@@ -1151,6 +1177,26 @@ void Collect2DGeometryToJson (const API_Element& element, nlohmann::ordered_json
             g["height"]   = element.text.size;
             g["pen"]      = static_cast<int> (element.text.pen);
             g["z_coordinate"] = static_cast<int> (element.header.floorInd);
+
+            API_ElementMemo memo = {};
+            GS::UniString txt;
+            int parCount = 0;
+#ifdef ServerMainVers_2800
+            const GSErrCode e2 = ACAPI_Element_GetMemo (element.header.guid, &memo,
+                APIMemoMask_TextContent | APIMemoMask_Paragraph);
+#else
+            const GSErrCode e2 = ACAPI_Element_GetMemo (element.header.guid, &memo,
+                APIMemoMask_TextContentUni | APIMemoMask_ParagraphUni);
+#endif
+            if (e2 == NoError) {
+                txt = ReadTextFromMemo (memo);
+                if (memo.paragraphs != nullptr) {
+                    parCount = static_cast<int> (BMGetHandleSize (reinterpret_cast<GSHandle> (memo.paragraphs)) / sizeof (API_ParagraphType));
+                }
+            }
+            ACAPI_DisposeElemMemoHdls (&memo);
+            g["text"]            = txt.ToCStr ().Get ();
+            g["paragraph_count"] = parCount;
         } break;
 
         case API_HotspotID: {
