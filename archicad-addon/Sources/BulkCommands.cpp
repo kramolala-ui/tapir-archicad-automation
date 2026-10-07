@@ -3719,10 +3719,10 @@ GS::ObjectState BulkSetElementDataCommand::Execute (
             }
 
             // 1. Element fields (story/layer/pos/level/angle)
+            // (parser already pushed the keys into srcOut["applied"])
             if (hasElementChanges) {
                 const GSErrCode e = ACAPI_Element_Change (&element, &mask, nullptr, 0, true);
-                if (e == NoError) ++appliedCount;
-                else {
+                if (e != NoError) {
                     nlohmann::ordered_json err2;
                     err2["msg"]  = "ACAPI_Element_Change(element) failed";
                     err2["code"] = static_cast<int64_t> (e);
@@ -3733,9 +3733,18 @@ GS::ObjectState BulkSetElementDataCommand::Execute (
 
             // 2. GDL parameters
             if (!gdlChanges.empty ()) {
-                const GSErrCode e = ApplyGdlBatch (element, gdlChanges);
-                if (e == NoError) ++appliedCount;
-                else {
+                std::vector<std::string> notApplied;
+                const GSErrCode e = ApplyGdlBatch (element, gdlChanges, notApplied);
+                if (e == NoError) {
+                    for (const GdlChange& c : gdlChanges) {
+                        bool bad = false;
+                        for (const std::string& n : notApplied) {
+                            if (n == c.name) { bad = true; break; }
+                        }
+                        if (bad) srcOut["ignored_locked"].push_back ("GDL/" + c.name);
+                        else     srcOut["applied"].push_back ("GDL/" + c.name);
+                    }
+                } else {
                     nlohmann::ordered_json err2;
                     err2["msg"]  = "GDL batch failed";
                     err2["code"] = static_cast<int64_t> (e);
@@ -3746,9 +3755,20 @@ GS::ObjectState BulkSetElementDataCommand::Execute (
 
             // 3. Properties (Archicad/*)
             if (!propChanges.empty ()) {
-                const GSErrCode e = ApplyPropertyBatch (guid, propChanges);
-                if (e == NoError) ++appliedCount;
-                else {
+                std::vector<API_Guid> notApplied;
+                const GSErrCode e = ApplyPropertyBatch (guid, propChanges, notApplied);
+                if (e == NoError) {
+                    for (const PropertyChange& pc : propChanges) {
+                        bool bad = false;
+                        for (const API_Guid& g : notApplied) {
+                            if (g == pc.propertyGuid) { bad = true; break; }
+                        }
+                        const std::string key =
+                            std::string ("Archicad/") + APIGuidToString (pc.propertyGuid).ToCStr ().Get ();
+                        if (bad) srcOut["ignored_locked"].push_back (key);
+                        else     srcOut["applied"].push_back (key);
+                    }
+                } else {
                     nlohmann::ordered_json err2;
                     err2["msg"]  = "Property batch failed";
                     err2["code"] = static_cast<int64_t> (e);
@@ -3759,9 +3779,20 @@ GS::ObjectState BulkSetElementDataCommand::Execute (
 
             // 4. Classifications (class/*)
             if (!classChanges.empty ()) {
-                const GSErrCode e = ApplyClassBatch (guid, classChanges);
-                if (e == NoError) ++appliedCount;
-                else {
+                std::vector<API_Guid> notApplied;
+                const GSErrCode e = ApplyClassBatch (guid, classChanges, notApplied);
+                if (e == NoError) {
+                    for (const ClassChange& cc : classChanges) {
+                        bool bad = false;
+                        for (const API_Guid& g : notApplied) {
+                            if (g == cc.systemGuid) { bad = true; break; }
+                        }
+                        const std::string key =
+                            std::string ("class/") + APIGuidToString (cc.systemGuid).ToCStr ().Get ();
+                        if (bad) srcOut["ignored_locked"].push_back (key);
+                        else     srcOut["applied"].push_back (key);
+                    }
+                } else {
                     nlohmann::ordered_json err2;
                     err2["msg"]  = "Class batch failed";
                     err2["code"] = static_cast<int64_t> (e);
@@ -3770,6 +3801,7 @@ GS::ObjectState BulkSetElementDataCommand::Execute (
                 }
             }
 
+            appliedCount += static_cast<int> (srcOut["applied"].size ());
             out["per_source"].push_back (srcOut);
         }
     };
