@@ -2700,8 +2700,14 @@ GS::ObjectState BulkFindReplaceTextCommand::Execute (
             }
 
             API_ElementMemo memo = {};
-            if (ACAPI_Element_GetMemo (guid, &memo,
-                    APIMemoMask_TextContent | APIMemoMask_Paragraph) != NoError) {
+#ifdef ServerMainVers_2800
+            const GSErrCode memoErr = ACAPI_Element_GetMemo (guid, &memo,
+                    APIMemoMask_TextContent | APIMemoMask_Paragraph);
+#else
+            const GSErrCode memoErr = ACAPI_Element_GetMemo (guid, &memo,
+                    APIMemoMask_TextContentUni | APIMemoMask_ParagraphUni);
+#endif
+            if (memoErr != NoError) {
                 ACAPI_DisposeElemMemoHdls (&memo);
                 continue;
             }
