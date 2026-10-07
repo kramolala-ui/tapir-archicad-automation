@@ -677,7 +677,7 @@ JSON-стена или серия вызовов.
 | 3 | `BulkGetTexts` | R | 25–29 | Тексты Text/Label | ✅ 2026-10-07 |
 | 4 | `BulkSetTexts` | W | 25–29 | Запись текста | ⚠ патч на `ApplyTextContent` отправлен, ждёт сборки |
 | 5 | `BulkFindReplaceText` | W | 25–29 | Find/replace, `dry_run` | ✅ 2026-10-07 (dry_run) |
-| 6 | `BulkGetElementMesh` | R | **25–26** | Меш через component-API (`Get3DInfo` + `GetComponent`) | ✅ 2026-10-07 (3D-окно не нужно) |
+| 6 | `BulkGetElementMesh` | R | **25–26** | Меш: component-API + ear-clipping (невыпуклые полигоны), Zone через polygonOutline | ✅ 2026-10-07 (без 3D-окна, ear-clipping, v0 fixed) |
 | 7 | `BulkGetElementData` | R | 25–29 | details/bbox/props/GDL/class/relations/**2D-geometry** | ✅ 2026-10-07 |
 | 8 | `BulkGetGroupMembers` | R | 25–29 | Нативная группа (Ctrl+G) + `with_data=true` | ✅ 2026-10-07 (37 entity одним вызовом) |
 | 9 | `BulkCloneElement` v2 | W | 25–29 | Копирование доноров из `sources[]` | ✅ 2026-10-07 |
