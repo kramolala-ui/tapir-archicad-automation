@@ -56,11 +56,11 @@ bulk-транспорта»).
 - **Upstream** — 105 команд, JSON API к Archicad.
 - **Наш форк** — 260+ команд: MEP, IFC, слои, аннотации, solid
   operations, rotate elements, копирование/поворот, зоны, ключевые
-  ноты, скрипт-UI, **13 bulk-команд** (`BulkPing`, `BulkGetPropertyValues`,
+  ноты, скрипт-UI, **14 bulk-команд** (`BulkPing`, `BulkGetPropertyValues`,
   `BulkGetTexts`, `BulkSetTexts`, `BulkFindReplaceText`, `BulkGetElementMesh`,
   `BulkGetElementData`, `BulkGetGroupMembers`, `BulkCloneElement`,
   `BulkMoveElements`, `BulkRotateElements`, `BulkSetElementData`,
-  `BulkDeleteElements`). См. §4f — реестр и CI-грабли.
+  `BulkDeleteElements`, `BulkCloneLabels`). См. §4f — реестр и CI-грабли.
 - **Зачем форк:** upstream не двигается; нужны свои команды и
   оптимизации, на которые upstream не пойдёт.
 
