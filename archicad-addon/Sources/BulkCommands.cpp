@@ -671,8 +671,14 @@ GS::ObjectState BulkGetTextsCommand::Execute (
             if (isText || isLabel) {
                 API_ElementMemo memo = {};
                 GS::UniString txt;
-                if (ACAPI_Element_GetMemo (element.header.guid, &memo,
-                        APIMemoMask_TextContent | APIMemoMask_Paragraph) == NoError) {
+#ifdef ServerMainVers_2800
+                const GSErrCode memoErr = ACAPI_Element_GetMemo (element.header.guid, &memo,
+                        APIMemoMask_TextContent | APIMemoMask_Paragraph);
+#else
+                const GSErrCode memoErr = ACAPI_Element_GetMemo (element.header.guid, &memo,
+                        APIMemoMask_TextContentUni | APIMemoMask_ParagraphUni);
+#endif
+                if (memoErr == NoError) {
                     txt = ReadTextFromMemo (memo);
                 }
                 ACAPI_DisposeElemMemoHdls (&memo);
