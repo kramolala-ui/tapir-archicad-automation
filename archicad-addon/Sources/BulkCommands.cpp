@@ -2374,12 +2374,13 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
             }
             if (polyIdx.size () < 4) continue;  // <3 уникальных вершин
 
-            // Fan-триангуляция: (v0, vi, vi+1), i=1..n-2.
-            for (size_t k = 1; k + 1 < polyIdx.size (); ++k) {
-                outTriangles.push_back (polyIdx[0]);
-                outTriangles.push_back (polyIdx[k]);
-                outTriangles.push_back (polyIdx[k + 1]);
-            }
+            // Ear-clipping триангуляция с согласованной ориентацией
+            // нормалей. Fan (было раньше) на невыпуклых полигонах
+            // даёт треугольники с противоположным знаком -> VTK
+            // красит грани вразнобой (диагональные артефакты).
+            // TriangulatePolygon ориентирует все треугольники по
+            // внешней нормали контура.
+            TriangulatePolygon (outVertices, polyIdx, outTriangles);
         }
     }
 
