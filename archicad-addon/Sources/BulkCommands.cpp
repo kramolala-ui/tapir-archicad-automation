@@ -1500,6 +1500,7 @@ GS::ObjectState BulkGetElementDataCommand::Execute (
     bool withBbox = true;
     bool withMesh = false;
     bool applyTransform = true;
+    bool with2DGeometry = false;
     bool readSelection = false;   // selected=true: читать текущее выделение
     bool withGroupInfo = true;    // добавлять group_guid в params
     bool withGroupMembers = false; // добавлять groups[...] в ответ
