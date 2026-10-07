@@ -3713,10 +3713,7 @@ GS::ObjectState BulkSetElementDataCommand::Execute (
             }
 
             if (dryRun) {
-                if (hasElementChanges)         ++appliedCount;
-                if (!gdlChanges.empty ())      ++appliedCount;
-                if (!classChanges.empty ())    ++appliedCount;
-                if (!propChanges.empty ())     ++appliedCount;
+                appliedCount += static_cast<int> (srcOut["applied"].size ());
                 out["per_source"].push_back (srcOut);
                 continue;
             }
