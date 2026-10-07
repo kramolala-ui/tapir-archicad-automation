@@ -1673,29 +1673,147 @@ void ApplyTranmat (const API_Tranmat& t, double& x, double& y, double& z)
     x = nx; y = ny; z = nz;
 }
 
-// Извлекает mesh одного элемента. Возвращает false + errOut — если
-// ACAPI не дал информацию или тело пустое.
+// Извлекает mesh одного элемента через низкоуровневый 3D-component API.
+// Не требует активного 3D-окна; на AC26 он не крешится (в отличие от
+// прежнего пути через SightPtr + EXPGetModel).
 //
-// ⚠ ВРЕМЕННЫЙ STUB. Точные имена полей в API_BodyType / API_VertType /
-// API_PgonType / API_PedgType из AC26 DevKit (файл APIdefs_3D.h) на момент
-// написания неизвестны, а угадывание (fvert/lvert/fpgon/lpgon/API_PEdgID/
-// pedg.vert1) дало 6 ошибок компиляции. Как только поля будут известны
-// (или найдётся путь через ModelerAPI::MeshBody) — здесь вернётся полная
-// реализация обхода 3D-компонент.
+// Схема обхода (APIdefs_3D.h, AC26):
+//   ACAPI_ModelAccess_Get3DInfo(elemHead, &info3D) → диапазон тел
+//                                                     [fbody..lbody]
+//   Для каждого тела iBody:
+//     GetComponent(API_BodyID, iBody)      → nVert, nPgon, nPedg, nEdge, tranmat
+//     GetComponent(API_VertID, 1..nVert)   → (x, y, z) в локальных координатах
+//     GetComponent(API_PgonID, 1..nPgon)   → fpedg, lpedg, status
+//     GetComponent(API_PedgID, fpedg..lpedg)→ pedg (знак = направление)
+//     GetComponent(API_EdgeID, abs(pedg))  → vert1, vert2
+//   Триангуляция: fan по контуру полигона.
 //
-// Реализация через ModelerAPI (см. DevKit Examples/ModelAccess_Test):
-//   1. ACAPI_3D_GetCurrentWindowSight — получить Sight активного окна.
-//      Работает только если активно 3D-окно; в FloorPlan вернёт nullptr.
-//   2. EXPGetModel(SightPtr, &Model, IAttributeReader*) — построить Model.
-//   3. Обход: Model::GetElement(i, &Element) — поиск по GetElemGuid().
-//   4. Element::GetTessellatedBody(iBody, &MeshBody)
-//      → MeshBody::GetPolygon(i, &Polygon)
-//      → Polygon::GetConvexPolygon(i, &ConvexPolygon)
-//      → ConvexPolygon::GetVertexIndex(k) → MeshBody::GetVertex(idx, &Vertex)
-//   5. Fan-триангуляция каждого ConvexPolygon.
+// Все индексы компонент у ACAPI 1-based (body, vert, pgon, pedg, edge),
+// в outVertices/outTriangles — 0-based (стандарт для GL/VTK/ifcopenshell).
 //
-// Все индексы у ModelerAPI 1-based (см. ModelAccess_Test_Exporter.cpp:334).
-// В vertices/triangles для msgpack — 0-based (стандарт для GL/VTK/ifcopenshell).
+// applyTransform=true: к координатам вершин применяется body.tranmat
+// (ACAPI-вершины идут в локальных координатах, а не в world — см.
+// ElementCommands.cpp:4148 про #563, где bbox уже world, а вертексы — нет).
+#if !defined (ServerMainVers_2700)
+bool ExtractElementMesh (const API_Elem_Head& elemHead,
+                         bool applyTransform,
+                         std::vector<float>& outVertices,
+                         std::vector<uint32_t>& outTriangles,
+                         std::string& errOut)
+{
+    outVertices.clear ();
+    outTriangles.clear ();
+
+    API_ElemInfo3D info3D = {};
+    const GSErrCode infoErr = ACAPI_ModelAccess_Get3DInfo (elemHead, &info3D);
+    if (infoErr != NoError) {
+        errOut = "Get3DInfo failed (code=" +
+                 std::to_string (static_cast<long long> (infoErr)) + ")";
+        return false;
+    }
+
+    if (info3D.fbody <= 0 || info3D.lbody < info3D.fbody) {
+        errOut = "no solid bodies in element";
+        return false;
+    }
+
+    for (Int32 iBody = info3D.fbody; iBody <= info3D.lbody; ++iBody) {
+        API_Component3D bodyComp = {};
+        bodyComp.header.typeID = API_BodyID;
+        bodyComp.header.index  = iBody;
+        if (ACAPI_ModelAccess_GetComponent (&bodyComp) != NoError) continue;
+        if (bodyComp.body.nPgon == 0 || bodyComp.body.nVert == 0) continue;
+
+        const Int32 nVert = bodyComp.body.nVert;
+        const Int32 nPgon = bodyComp.body.nPgon;
+        const API_Tranmat bodyTran = bodyComp.body.tranmat;
+
+        // 1) Вершины. Собираем все локальные координаты этого тела в буфер
+        //    localVerts[localIdx-1] = world (x,y,z) (после возможной tranmat).
+        //    Индексация — 1-based, копируем в outVertices с базовым сдвигом.
+        const uint32_t bodyBaseIdx = static_cast<uint32_t> (outVertices.size () / 3);
+        std::vector<uint32_t> localToGlobal (static_cast<size_t> (nVert) + 1, 0);
+        for (Int32 iVert = 1; iVert <= nVert; ++iVert) {
+            API_Component3D vc = {};
+            vc.header.typeID = API_VertID;
+            vc.header.index  = iVert;
+            if (ACAPI_ModelAccess_GetComponent (&vc) != NoError) continue;
+            double x = vc.vert.x;
+            double y = vc.vert.y;
+            double z = vc.vert.z;
+            if (applyTransform) {
+                ApplyTranmat (bodyTran, x, y, z);
+            }
+            const uint32_t globalIdx = static_cast<uint32_t> (outVertices.size () / 3);
+            localToGlobal[static_cast<size_t> (iVert)] = globalIdx;
+            outVertices.push_back (static_cast<float> (x));
+            outVertices.push_back (static_cast<float> (y));
+            outVertices.push_back (static_cast<float> (z));
+        }
+
+        // 2) Полигоны 1..nPgon.
+        for (Int32 iPgon = 1; iPgon <= nPgon; ++iPgon) {
+            API_Component3D pc = {};
+            pc.header.typeID = API_PgonID;
+            pc.header.index  = iPgon;
+            if (ACAPI_ModelAccess_GetComponent (&pc) != NoError) continue;
+            if (pc.pgon.status & APIPgon_Invis) continue;
+
+            // Контур: рёбра fpedg..lpedg. Каждая pedg ссылается на edge
+            // (знаковый index: <0 = обратное направление). pedg == 0 —
+            // начало «дырки»; в v1 просто обрываем контур.
+            std::vector<uint32_t> polyIdx;
+            polyIdx.reserve (8);
+            for (Int32 iPedge = pc.pgon.fpedg; iPedge <= pc.pgon.lpedg; ++iPedge) {
+                API_Component3D ec = {};
+                ec.header.typeID = API_PedgID;
+                ec.header.index  = iPedge;
+                if (ACAPI_ModelAccess_GetComponent (&ec) != NoError) continue;
+                const Int32 pedgSigned = ec.pedg.pedg;
+                if (pedgSigned == 0) break;
+                const Int32 edgeIdx = (pedgSigned < 0) ? -pedgSigned : pedgSigned;
+                const bool reverse = (pedgSigned < 0);
+
+                API_Component3D edgeComp = {};
+                edgeComp.header.typeID = API_EdgeID;
+                edgeComp.header.index  = edgeIdx;
+                if (ACAPI_ModelAccess_GetComponent (&edgeComp) != NoError) continue;
+
+                Int32 v1 = edgeComp.edge.vert1;
+                Int32 v2 = edgeComp.edge.vert2;
+                if (reverse) { const Int32 t = v1; v1 = v2; v2 = t; }
+
+                if (v1 <= 0 || v1 > nVert || v2 <= 0 || v2 > nVert) continue;
+                const uint32_t gv1 = localToGlobal[static_cast<size_t> (v1)];
+                const uint32_t gv2 = localToGlobal[static_cast<size_t> (v2)];
+                if (gv1 == 0 || gv2 == 0) continue;
+
+                if (polyIdx.empty ()) polyIdx.push_back (gv1);
+                if (polyIdx.back () != gv2) polyIdx.push_back (gv2);
+            }
+
+            // Замкнуть контур: если последняя != первой, добавить первую.
+            if (polyIdx.size () >= 3 && polyIdx.front () != polyIdx.back ()) {
+                polyIdx.push_back (polyIdx.front ());
+            }
+            if (polyIdx.size () < 4) continue;  // <3 уникальных вершин
+
+            // Fan-триангуляция: (v0, vi, vi+1), i=1..n-2.
+            for (size_t k = 1; k + 1 < polyIdx.size (); ++k) {
+                outTriangles.push_back (polyIdx[0]);
+                outTriangles.push_back (polyIdx[k]);
+                outTriangles.push_back (polyIdx[k + 1]);
+            }
+        }
+    }
+
+    if (outVertices.empty () || outTriangles.empty ()) {
+        errOut = "empty mesh (no triangles collected)";
+        return false;
+    }
+    return true;
+}
+#else
 bool ExtractElementMesh (const API_Elem_Head& elemHead,
                          bool /*applyTransform*/,
                          std::vector<float>& outVertices,
@@ -1704,129 +1822,13 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
 {
     outVertices.clear ();
     outTriangles.clear ();
-
-#if !TAPIR_AC26_ONLY
-    // Mesh реализован только для AC26. На остальных версиях — graceful stub.
-    // Причины: (1) ACAPI_3D_GetCurrentWindowSight есть только в AC26; (2) на
-    // AC29 Model.hpp ломает GDL/PropertyListImp.hpp. См. AI_PRINCIPLES §10a.
-    //
-    // На 25/27/28/29 elemHead в этой ветке не используется — глушим C4100,
-    // иначе CI с /WX падает ещё на этапе компиляции.
+    // На AC27+ alias'ы ACAPI_ModelAccess_Get3DInfo / GetComponent
+    // в MigrationHelper.hpp отсутствуют. Возвращаем graceful stub.
     (void) elemHead;
-    errOut = "mesh not supported on this Archicad version (only AC26 for now)";
+    errOut = "mesh not supported on this Archicad version (only AC25/AC26 for now)";
     return false;
-#else
-    // ---- 1. Sight активного окна ----
-    void* sightRaw = nullptr;
-    if (ACAPI_3D_GetCurrentWindowSight (&sightRaw) != NoError || sightRaw == nullptr) {
-        errOut = "no 3D window is open; call TapirConnection.change_window('3DModel') first";
-        return false;
-    }
-
-    // ACAPI отдаёт адрес существующего Modeler::SightPtr (GS::SharedPtr<Sight>).
-    // Копируем — копия инкрементит refcount, живёт на время вызова, оригинал не трогаем.
-    auto* sightPtrPtr = static_cast<Modeler::SightPtr*> (sightRaw);
-    if (sightPtrPtr == nullptr) {
-        errOut = "invalid SightPtr from ACAPI_3D_GetCurrentWindowSight";
-        return false;
-    }
-    Modeler::SightPtr sight = *sightPtrPtr;
-
-    // ---- 2. AttributeReader + EXPGetModel ----
-    GS::Owner<Modeler::IAttributeReader> attrReader (
-        ACAPI_Attribute_GetCurrentAttributeSetReader ());
-    if (attrReader == nullptr) {
-        errOut = "failed to get IAttributeReader";
-        return false;
-    }
-    ModelerAPI::Model model;
-    if (EXPGetModel (sight, &model, attrReader.Get ()) != NoError) {
-        errOut = "EXPGetModel failed";
-        return false;
-    }
-
-    // ---- 3. Поиск элемента по GUID ----
-    const Int32 nElements = model.GetElementCount ();
-    ModelerAPI::Element element;
-    bool found = false;
-    for (Int32 iElem = 1; iElem <= nElements; ++iElem) {
-        model.GetElement (iElem, &element);
-        if (element.GetElemGuid () == elemHead.guid) {
-            found = true;
-            break;
-        }
-    }
-    if (!found) {
-        errOut = "element not found in current 3D model (hidden layer? not in view?)";
-        return false;
-    }
-
-    const Int32 nBodies = element.GetTessellatedBodyCount ();
-    if (nBodies < 1) {
-        errOut = "element has no tessellated body (not a 3D element?)";
-        return false;
-    }
-
-    // ---- 4. Обход mesh ----
-    // Дедупликация вершин: одна и та же вершина встречается в нескольких
-    // полигонах. Без remap получим дубликаты и кривые нормали.
-    // Ключ: (bodyIdx << 32) | localVertexIndex (1-based в body).
-    std::unordered_map<uint64_t, uint32_t> vertexRemap;
-
-    ModelerAPI::MeshBody body;
-    ModelerAPI::Polygon polygon;
-    ModelerAPI::ConvexPolygon convexPolygon;
-    ModelerAPI::Vertex vertex;
-
-    auto getOrAddVertex = [&](uint32_t bodyIdx, int32_t localIdx, ModelerAPI::MeshBody& b) -> uint32_t {
-        const uint64_t key = (static_cast<uint64_t> (bodyIdx) << 32) |
-                             static_cast<uint32_t> (localIdx);
-        auto it = vertexRemap.find (key);
-        if (it != vertexRemap.end ()) return it->second;
-        b.GetVertex (localIdx, &vertex);
-        const uint32_t newIdx = static_cast<uint32_t> (outVertices.size () / 3);
-        outVertices.push_back (static_cast<float> (vertex.x));
-        outVertices.push_back (static_cast<float> (vertex.y));
-        outVertices.push_back (static_cast<float> (vertex.z));
-        vertexRemap[key] = newIdx;
-        return newIdx;
-    };
-
-    std::vector<uint32_t> polyIndices;
-    for (Int32 iBody = 1; iBody <= nBodies; ++iBody) {
-        element.GetTessellatedBody (iBody, &body);
-        const Int32 nPoly = body.GetPolygonCount ();
-        for (Int32 iPgon = 1; iPgon <= nPoly; ++iPgon) {
-            body.GetPolygon (iPgon, &polygon);
-            const Int32 nCvx = polygon.GetConvexPolygonCount ();
-            for (Int32 iCvx = 1; iCvx <= nCvx; ++iCvx) {
-                polygon.GetConvexPolygon (iCvx, &convexPolygon);
-                const Int32 nPedge = convexPolygon.GetVertexCount ();
-                if (nPedge < 3) continue;
-                polyIndices.clear ();
-                polyIndices.reserve (static_cast<size_t> (nPedge));
-                for (Int32 iPedge = 1; iPedge <= nPedge; ++iPedge) {
-                    const int32_t origIdx = convexPolygon.GetVertexIndex (iPedge);
-                    polyIndices.push_back (
-                        getOrAddVertex (static_cast<uint32_t> (iBody), origIdx, body));
-                }
-                // Fan-триангуляция: (v0, vi, vi+1) для i=1..n-2.
-                for (size_t i = 1; i + 1 < polyIndices.size (); ++i) {
-                    outTriangles.push_back (polyIndices[0]);
-                    outTriangles.push_back (polyIndices[i]);
-                    outTriangles.push_back (polyIndices[i + 1]);
-                }
-            }
-        }
-    }
-
-    if (outVertices.empty ()) {
-        errOut = "empty mesh (no vertices collected)";
-        return false;
-    }
-    return true;
-#endif  // TAPIR_AC26_ONLY
 }
+#endif
 
 // Плоский массив float32/uint32 -> байтовый вектор little-endian.
 std::vector<uint8_t> FloatsToBytes (const std::vector<float>& v)
