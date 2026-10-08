@@ -1320,6 +1320,31 @@ void TranmatFromPlane3D (const API_Plane3D& p, API_Tranmat& out)
     out.tmx[11] = p.basePoint.z;
 }
 
+// ---- World transform of an owner element (Wall / Roof / Shell) ---------
+// Используется для Window / Door / Skylight / Opening: их body.tranmat
+// даёт локальную систему (в системе стены-хозяина), а нам нужна мировая.
+// Берём first body.tranmat owner-элемента — у стены/крыши он мировой.
+// Возвращает true, если удалось прочитать хотя бы одно тело хозяина.
+bool GetOwnerWorldTranmat (const API_Guid& ownerGuid, API_Tranmat& out)
+{
+    if (ownerGuid == APINULLGuid) return false;
+
+    API_Elem_Head ownerHead = {};
+    ownerHead.guid = ownerGuid;
+
+    API_ElemInfo3D ownerInfo = {};
+    if (ACAPI_ModelAccess_Get3DInfo (ownerHead, &ownerInfo) != NoError) return false;
+    if (ownerInfo.fbody <= 0 || ownerInfo.lbody < ownerInfo.fbody) return false;
+
+    API_Component3D bodyComp = {};
+    bodyComp.header.typeID = API_BodyID;
+    bodyComp.header.index  = ownerInfo.fbody;
+    if (ACAPI_ModelAccess_GetComponent (&bodyComp) != NoError) return false;
+
+    out = bodyComp.body.tranmat;
+    return true;
+}
+
 bool ExtractElementMesh (const API_Elem_Head& elemHead,
                          bool applyTransform,
                          std::vector<float>& outVertices,
