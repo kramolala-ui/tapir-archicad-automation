@@ -1190,7 +1190,7 @@ void Collect2DGeometryToJson (const API_Element& element, nlohmann::ordered_json
             g["building_material_id"]      = APIGuidToString (GetAttributeGuidFromIndex (API_BuildingMaterialID, element.hatch.buildingMaterial)).ToCStr ().Get ();
             g["room_special"]              = element.hatch.roomSpecial;
             g["show_area"]                 = element.hatch.showArea != 0;
-            g["z_coordinate"]              = static_cast<int> (element.header.floorInd);
+            g["z_coordinate"]              = GetStoryLevelZ (element.header.floorInd);
         } break;
 
         case API_LineID: {
