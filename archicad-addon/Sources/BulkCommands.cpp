@@ -1244,7 +1244,7 @@ void Collect2DGeometryToJson (const API_Element& element, nlohmann::ordered_json
             g["mid_coordinate"]  = m;
             g["end_coordinate"]  = e;
             g["has_leader_line"] = element.label.hasLeaderLine;
-            g["z_coordinate"]    = static_cast<int> (element.header.floorInd);
+            g["z_coordinate"]    = GetStoryLevelZ (element.header.floorInd);
 
             // Текст читаем через тот же helper, что BulkGetTextsCommand —
             // плоская конкатенация всех параграфов memo. Для symbol-Label
