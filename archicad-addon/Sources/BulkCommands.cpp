@@ -2387,8 +2387,14 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
         bodyComp.header.index  = iBody;
         if (ACAPI_ModelAccess_GetComponent (&bodyComp) != NoError) continue;
         ++diagBodiesRead;
-        if (bodyComp.body.nPgon == 0 || bodyComp.body.nVert == 0) continue;
-        ++diagBodiesWithPgons;
+
+        // Тело пропускаем только если у него нет вершин вообще (нечего
+        // адресовать). nPgon==0 больше не признак «пустое тело»: у GDL-
+        // объектов (символьные линии, оси, размерные линии) бывают тела
+        // только с рёбрами и без полигонов — такие надо обработать и
+        // прочитать body.nEdge ниже.
+        if (bodyComp.body.nVert == 0) continue;
+        if (bodyComp.body.nPgon > 0) ++diagBodiesWithPgons;
 
         const Int32 nVert = bodyComp.body.nVert;
         const Int32 nPgon = bodyComp.body.nPgon;
