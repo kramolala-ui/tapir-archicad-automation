@@ -166,6 +166,21 @@ GS::ObjectState	CreateElementsCommandBase::CreateMany (const GS::Array<GS::Objec
     notification.notifID = APINotifyElement_EndEvents;
     AddElementNotificationClientCommand::ElementEventHandlerProc (&notification);
 
+    return results;
+}
+
+GS::ObjectState CreateElementsCommandBase::Execute (const GS::ObjectState& parameters, GS::ProcessControl& /*processControl*/) const
+{
+    GS::Array<GS::ObjectState> dataArray;
+    parameters.Get (arrayFieldName, dataArray);
+
+    const GS::Array<GS::ObjectState> results = CreateMany (dataArray);
+
+    GS::ObjectState response;
+    const auto& elements = response.AddList<GS::ObjectState> ("elements");
+    for (const GS::ObjectState& item : results) {
+        elements (item);
+    }
     return response;
 }
 
