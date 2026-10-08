@@ -5286,16 +5286,4 @@ GS::ObjectState BulkCreateElementsCommandBase::Execute (
 }
 
 
-// ---------------------------------------------------------------------
-//  Concrete BulkCreate* constructors
-//
-//  One-line wrappers: the matching Create*Command is constructed and
-//  stored as the delegate. All the per-item logic lives in the base.
-//  Nothing else to implement here.
-// ---------------------------------------------------------------------
-//
-//  NOTE: intentionally no BulkCreatePolylinesCommand::<other overrides>
-//  - the base class carries everything (GetName, schemas, Execute).
-//  The subclasses exist purely so RegisterCommand<> can name each type.
 
-// (constructors are already inline in BulkCommands.hpp)
