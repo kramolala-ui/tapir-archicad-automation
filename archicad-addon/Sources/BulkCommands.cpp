@@ -2440,8 +2440,11 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
     // Wall / Slab / Roof / Mesh / Object / Lamp / Morph / Zone are left
     // alone: they have their own solid bodies and the existing Get3DInfo
     // path handles them.
+    // tid вынесен на уровень функции: используется и в expand-блоке, и
+    // в body-loop (ветка Object/Lamp ниже). Раньше был внутри блока { ... },
+    // из-за чего в body-loop был невидим.
+    const API_ElemTypeID tid = GetElemTypeId (elemHead);
     {
-        const API_ElemTypeID tid = GetElemTypeId (elemHead);
         const bool hierarchical =
             tid == API_ColumnID ||
             tid == API_BeamID ||
