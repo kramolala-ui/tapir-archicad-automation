@@ -1290,7 +1290,8 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
                          bool applyTransform,
                          std::vector<float>& outVertices,
                          std::vector<uint32_t>& outTriangles,
-                         std::string& errOut);
+                         std::string& errOut,
+                         std::vector<uint32_t>* outEdges = nullptr);
 std::vector<uint8_t> FloatsToBytes (const std::vector<float>& v);
 std::vector<uint8_t> UIntsToBytes (const std::vector<uint32_t>& v);
 
