@@ -124,7 +124,7 @@ GS::ObjectState	CreateElementsCommandBase::CreateMany (const GS::Array<GS::Objec
 #endif
             err = ACAPI_Element_GetDefaults (&element, &memo);
             if (err != NoError) {
-                elements (CreateErrorResponse (err, "Failed to read the " + elemTypeName + " defaults."));
+                results.Push (CreateErrorResponse (err, "Failed to read the " + elemTypeName + " defaults."));
                 continue;
             }
 
