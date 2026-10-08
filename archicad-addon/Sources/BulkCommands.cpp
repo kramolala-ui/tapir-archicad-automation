@@ -2485,7 +2485,13 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
     }
 
     if (outVertices.empty () || outTriangles.empty ()) {
-        errOut = "empty mesh (no triangles collected)";
+        errOut = "empty mesh ("
+               "fbody="     + std::to_string (info3D.fbody) +
+               " lbody="    + std::to_string (info3D.lbody) +
+               " bodies_read="     + std::to_string (diagBodiesRead) +
+               " bodies_with_pgons=" + std::to_string (diagBodiesWithPgons) +
+               " total_pgons="     + std::to_string (diagTotalPgons) +
+               " invis_pgons="     + std::to_string (diagInvisPgons) + ")";
         return false;
     }
     return true;
