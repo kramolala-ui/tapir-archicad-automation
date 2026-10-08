@@ -3233,6 +3233,12 @@ GS::ObjectState BulkGetElementMeshCommand::Execute (
         row["vertexCount"]   = static_cast<uint64_t> (vertices.size () / 3);
         row["triangleCount"] = static_cast<uint64_t> (triangles.size () / 3);
         row["edgeCount"]     = static_cast<uint64_t> (edges.size () / 2);
+        // has_3d: явный признак «есть 3D-геометрия». false = 2D-символ
+        // без 3D-скрипта или пустой GDL. Клиенту не нужно парсить
+        // err-строку 'empty mesh (...)'. true при наличии vertices
+        // ИЛИ standalone edges (edge-only GDL-объекты валидны).
+        row["has_3d"]        = (row["vertexCount"].get<uint64_t> () > 0)
+                            || (row["edgeCount"].get<uint64_t> () > 0);
         row["vertices"]      = nlohmann::json::binary (FloatsToBytes (vertices));
         row["triangles"]     = nlohmann::json::binary (UIntsToBytes (triangles));
         row["edges"]         = nlohmann::json::binary (UIntsToBytes (edges));
