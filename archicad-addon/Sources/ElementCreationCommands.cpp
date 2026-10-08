@@ -33,7 +33,7 @@ GS::Optional<GS::UniString> CreateElementsCommandBase::GetRawResponseSchema () c
     })";
 }
 
-GS::ObjectState	CreateElementsCommandBase::CreateMany (const GS::Array<GS::ObjectState>& dataArray) const
+GS::Array<GS::ObjectState>	CreateElementsCommandBase::CreateMany (const GS::Array<GS::ObjectState>& dataArray) const
 {
     GS::Array<GS::ObjectState> results;
 
