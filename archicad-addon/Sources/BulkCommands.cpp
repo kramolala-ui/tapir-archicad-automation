@@ -282,6 +282,54 @@ GSErrCode ApplyTextToElement (API_Element& element,
     return err;
 }
 
+// Recursive nlohmann::json -> GS::ObjectState converter for BulkCreate*
+// payloads. Create*Command::SetTypeSpecificParameters reads fields via
+// GS::ObjectState::Get (string / int / double / bool / nested object /
+// array of nested objects), so the conversion has to mirror that shape.
+// nulls are skipped ("field absent"); arrays of primitives are wrapped
+// as {"value": ...} so the shape stays a GS::Array<GS::ObjectState>.
+GS::ObjectState JsonToObjectState (const nlohmann::json& j)
+{
+    GS::ObjectState out;
+    if (!j.is_object ()) {
+        return out;
+    }
+    for (auto it = j.begin (); it != j.end (); ++it) {
+        const std::string& key = it.key ();
+        const nlohmann::json& v = it.value ();
+        if (v.is_null ()) {
+            continue;
+        } else if (v.is_string ()) {
+            out.Add (key.c_str (), GS::UniString (v.get<std::string> ().c_str ()));
+        } else if (v.is_boolean ()) {
+            out.Add (key.c_str (), v.get<bool> ());
+        } else if (v.is_number_integer ()) {
+            out.Add (key.c_str (), static_cast<Int64> (v.get<int64_t> ()));
+        } else if (v.is_number_unsigned ()) {
+            out.Add (key.c_str (), static_cast<Int64> (v.get<uint64_t> ()));
+        } else if (v.is_number_float ()) {
+            out.Add (key.c_str (), v.get<double> ());
+        } else if (v.is_array ()) {
+            GS::Array<GS::ObjectState> arr;
+            for (const auto& el : v) {
+                if (el.is_object ()) {
+                    arr.Push (JsonToObjectState (el));
+                } else if (el.is_string ()) {
+                    arr.Push (GS::ObjectState ("value", GS::UniString (el.get<std::string> ().c_str ())));
+                } else if (el.is_number ()) {
+                    arr.Push (GS::ObjectState ("value", el.get<double> ()));
+                } else if (el.is_boolean ()) {
+                    arr.Push (GS::ObjectState ("value", el.get<bool> ()));
+                }
+            }
+            out.Add (key.c_str (), arr);
+        } else if (v.is_object ()) {
+            out.Add (key.c_str (), JsonToObjectState (v));
+        }
+    }
+    return out;
+}
+
 }  // namespace
 
 
