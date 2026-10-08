@@ -2490,9 +2490,33 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
             // внешней нормали контура.
             TriangulatePolygon (outVertices, polyIdx, outTriangles);
         }
+
+        // Standalone edges of this body — читаем ВСЕ рёбра тела, а не
+        // только те, что уже обошли через pgon.fpedg..lpedg. У GDL-
+        // объектов (библиотечная «Стрелка», оси, размерные линии)
+        // видимые тонкие линии лежат в теле как свободные рёбра: они
+        // не входят ни в один полигон, и обход pgon→pedg их не видит.
+        // Отдаём их через outEdges — клиент нарисует их как GL_LINES
+        // поверх triangles.
+        if (outEdges != nullptr && bodyComp.body.nEdge > 0) {
+            for (Int32 iEdge = 1; iEdge <= bodyComp.body.nEdge; ++iEdge) {
+                API_Component3D edgeComp = {};
+                edgeComp.header.typeID = API_EdgeID;
+                edgeComp.header.index  = iEdge;
+                if (ACAPI_ModelAccess_GetComponent (&edgeComp) != NoError) continue;
+                const Int32 v1 = edgeComp.edge.vert1;
+                const Int32 v2 = edgeComp.edge.vert2;
+                if (v1 <= 0 || v1 > nVert || v2 <= 0 || v2 > nVert) continue;
+                const uint32_t gv1 = localToGlobal[static_cast<size_t> (v1)];
+                const uint32_t gv2 = localToGlobal[static_cast<size_t> (v2)];
+                if (gv1 == kInvalidIdx || gv2 == kInvalidIdx) continue;
+                outEdges->push_back (gv1);
+                outEdges->push_back (gv2);
+            }
+        }
     }
 
-    if (outVertices.empty () || outTriangles.empty ()) {
+    if (outVertices.empty ()) {
         errOut = "empty mesh ("
                "fbody="     + std::to_string (info3D.fbody) +
                " lbody="    + std::to_string (info3D.lbody) +
@@ -2500,6 +2524,13 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
                " bodies_with_pgons=" + std::to_string (diagBodiesWithPgons) +
                " total_pgons="     + std::to_string (diagTotalPgons) +
                " invis_pgons="     + std::to_string (diagInvisPgons) + ")";
+        return false;
+    }
+    // Element с одними рёбрами и без треугольников — валиден (символьные
+    // линии GDL-объектов). Пустым считаем только если ни triangles, ни edges.
+    if (outTriangles.empty () &&
+        (outEdges == nullptr || outEdges->empty ())) {
+        errOut = "empty mesh (no triangles and no edges collected)";
         return false;
     }
     return true;
