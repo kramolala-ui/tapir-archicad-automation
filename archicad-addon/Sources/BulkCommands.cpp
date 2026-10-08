@@ -1286,12 +1286,47 @@ nlohmann::ordered_json CollectElementData (const ElementDataOptions& opts);
 // Эти функции живут в блоке BulkGetElementMeshCommand (ниже по файлу),
 // но BulkGetElementData вызывает их до их определений. Объявляем заранее.
 void ApplyTranmat (const API_Tranmat& t, double& x, double& y, double& z);
+
+// ---- 3x4 matrix multiply: out = a * b ------------------------------
+// API_Tranmat = double tmx[12] (3 строки по 4, 4-й столбец = трансляция;
+// 4-я строка у обоих — неявная (0, 0, 0, 1)).
+void MultiplyTranmat (const API_Tranmat& a, const API_Tranmat& b,
+                      API_Tranmat& out)
+{
+    API_Tranmat res = {};
+    for (int i = 0; i < 3; ++i) {
+        for (int j = 0; j < 4; ++j) {
+            double s = 0.0;
+            for (int k = 0; k < 3; ++k) {
+                s += a.tmx[i * 4 + k] * b.tmx[k * 4 + j];
+            }
+            if (j == 3) s += a.tmx[i * 4 + 3];
+            res.tmx[i * 4 + j] = s;
+        }
+    }
+    out = res;
+}
+
+// ---- API_Plane3D -> API_Tranmat ------------------------------------
+// basePoint + три ортонормированные оси задают полный local->world
+// transform. Используется для Stair.basePlane.
+void TranmatFromPlane3D (const API_Plane3D& p, API_Tranmat& out)
+{
+    out.tmx[0]  = p.axisX.x; out.tmx[1]  = p.axisY.x; out.tmx[2]  = p.axisZ.x;
+    out.tmx[3]  = p.basePoint.x;
+    out.tmx[4]  = p.axisX.y; out.tmx[5]  = p.axisY.y; out.tmx[6]  = p.axisZ.y;
+    out.tmx[7]  = p.basePoint.y;
+    out.tmx[8]  = p.axisX.z; out.tmx[9]  = p.axisY.z; out.tmx[10] = p.axisZ.z;
+    out.tmx[11] = p.basePoint.z;
+}
+
 bool ExtractElementMesh (const API_Elem_Head& elemHead,
                          bool applyTransform,
                          std::vector<float>& outVertices,
                          std::vector<uint32_t>& outTriangles,
                          std::string& errOut,
-                         std::vector<uint32_t>* outEdges = nullptr);
+                         std::vector<uint32_t>* outEdges = nullptr,
+                         const API_Tranmat* parentTran = nullptr);
 std::vector<uint8_t> FloatsToBytes (const std::vector<float>& v);
 std::vector<uint8_t> UIntsToBytes (const std::vector<uint32_t>& v);
 
