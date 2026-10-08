@@ -1679,6 +1679,48 @@ Archicad через `ACAPI_ElementGroup_GetGroup` (element → parent) и
 больше нет — она ломала якоря replace и жгла токены на повторные чтения.
 См. §10b.
 
+**2026-10-08:** В `BulkCommands.cpp` добавлено чтение `element.object.reflected`
+→ `params["object_reflected"]` для Object / MEP. Два места:
+`CollectElementData` и инлайн-блок `BulkGetElementData::Execute`. При Mirror
+Archicad поворачивает Object на 180° в `element.object.angle`, но само
+отражение клиенту не пробрасывалось — отзеркаленный объект рисовался
+«повёрнутым, но не отражённым». Подробности — §10b.
+
+**2026-10-08:** `ExtractElementMesh` расширен для иерархических типов
+(Column / Beam / CurtainWall / Stair / Railing). У них топ-хедер пустой
+(`Get3DInfo` → `vc=0`), вся геометрия в субэлементах
+(`memo.columnSegments` / `cWallFrames` / `stairTreads` / `railing*`).
+Рекурсивная склейка с offset по `base = outVertices.size()/3`. Live-проверка
+на AC26: Column `A01B5355-...` — было `vc=0 tc=0 err='empty mesh'`, стало
+`vc=32 tc=36 err=None`. Wall / Slab / Roof / Object / Morph / Zone / Mesh —
+без изменений (своё solid-тело). Подробности — §10b.
+
+**2026-10-08:** `ExtractElementMesh` читает `body.nEdge` — standalone рёбра
+без полигонов («усики» GDL-объектов, оси, размерные линии). В row добавлены
+`edgeCount` и `edges` (binary). Python-сторона (`tools/_archicad_realtime_helpers.py`):
+`mesh_from_row` собирает VTK-lines `[2, i, j, 2, ...]` и присоединяет к
+PolyData через `mesh.lines = lines_arr` (один актёр несёт triangles + edges);
+`mesh_hash` включает edges (двинули ось — актёр перерисуется). Подробности —
+§10b.
+
+**2026-10-08:** Из `mesh_from_row` убран `auto_orient_normals=True`. Эта
+операция для согласования нормалей стремится сделать mesh «закрытым» и
+**визуально заделывает реальные отверстия** в геометрии (проёмы в стенах,
+торцы воздуховодов). Диагностика на AC26: Object `4F8F1842` (Отвод
+Воздуховода 20) — 6 border components (отверстий) по 4 вершины, CAPS=0
+(«capping»-треугольников в самом mesh нет), значит заделка была в Python-
+рендере. Оставлен простой `compute_normals(inplace=True)`. Подробности —
+§10b.
+
+**2026-10-08:** Сигнатура `ExtractElementMesh` синхронизирована по всем
+веткам. **C5046** — forward-decl объявлял 5 аргументов, определение — 6
+(`outEdges = nullptr`); MSVC видел разные перегрузки, 5-арг версия без
+тела → C2220 при `/WX`. **C2572** — после первого фикса на forward-decl
+в AC27+ определении (стр. 2881) тоже остался `= nullptr`. Итог: forward-decl
+с `outEdges = nullptr` (единственный default в TU), оба определения (AC25/26
+и AC27+) — без default. Сборка зелёная на AC25/26/27+ в CI. Подробности —
+§10b.
+
 ---
 
 ## 10a. BulkGetElementData / BulkGetElementMesh / геометрия (2026-10-06)
