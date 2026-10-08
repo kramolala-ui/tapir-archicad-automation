@@ -2558,7 +2558,15 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
 
         const Int32 nVert = bodyComp.body.nVert;
         const Int32 nPgon = bodyComp.body.nPgon;
-        const API_Tranmat bodyTran = bodyComp.body.tranmat;
+        API_Tranmat bodyTran = bodyComp.body.tranmat;
+        // Композит с родительским transform (CurtainWall.planeMatrix /
+        // Stair.basePlane). Без него субэлементы иерархических типов
+        // позиционируются правильно, но с перепутанными осями.
+        if (applyTransform && parentTran != nullptr) {
+            API_Tranmat combined;
+            MultiplyTranmat (*parentTran, bodyTran, combined);
+            bodyTran = combined;
+        }
 
         // 1) Вершины. Собираем все локальные координаты этого тела в буфер
         //    localVerts[localIdx-1] = world (x,y,z) (после возможной tranmat).
