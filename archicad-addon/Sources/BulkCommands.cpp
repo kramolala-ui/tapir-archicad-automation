@@ -2486,6 +2486,12 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
     // в body-loop (ветка Object/Lamp ниже). Раньше был внутри блока { ... },
     // из-за чего в body-loop был невидим.
     const API_ElemTypeID tid = GetElemTypeId (elemHead);
+    // elementParentTran / elementParentPtr вынесены на уровень функции:
+    // используются и в expand-блоке (передаются в рекурсию appendSub), и
+    // в body-loop (композит parentTran × bodyTran). Раньше жили внутри
+    // блока { ... }, и в body-loop давали 'undeclared identifier' (C2065).
+    API_Tranmat elementParentTran = {};
+    const API_Tranmat* elementParentPtr = nullptr;
     {
         const bool hierarchical =
             tid == API_ColumnID ||
