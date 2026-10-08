@@ -1400,6 +1400,8 @@ std::vector<uint8_t> UIntsToBytes (const std::vector<uint32_t>& v);
 // Возвращает { entities: [...], relations: [...] }.
 nlohmann::ordered_json CollectElementData (const ElementDataOptions& opts)
 {
+    ResetStoryLevelCache ();
+
     nlohmann::ordered_json out;
     out["entities"]  = nlohmann::json::array ();
     out["relations"] = nlohmann::json::array ();
