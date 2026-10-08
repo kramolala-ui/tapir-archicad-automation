@@ -4989,7 +4989,7 @@ GS::ObjectState BulkCreateElementsCommandBase::Execute (
     // Delegate owns the field name ("polylinesData", "wallsData", ...);
     // looked up at Execute time so the bulk channel accepts the exact same
     // payload shape as the matching JSON Create*Command.
-    const std::string fieldName = delegate->GetArrayFieldName ().ToCStr ().Get ();
+    const std::string fieldName = delegate->GetArrayFieldName ().ToCStr ();
     if (!j.is_object () || !j.contains (fieldName) || !j[fieldName].is_array ()) {
         const std::string msg = "payload must contain '" + fieldName + "' array";
         return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
