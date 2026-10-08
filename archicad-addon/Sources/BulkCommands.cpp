@@ -4897,6 +4897,235 @@ GS::ObjectState BulkDeleteElementsCommand::Execute (
 //  BulkCreateElementsCommandBase
 // ---------------------------------------------------------------------
 //
+// Common Execute for all BulkCreate* commands. Delegates to the matching
+// Create*Command's CreateMany (one undo, per-item errors), then reshapes
+// the per-item report into the standard bulk response:
+//     { per_source, created_guids, created_count, errors_count }
+//
+// Per-item success is recognised as {"elementId": {"guid": ...}};
+// per-item failure is recognised as {"error": {code, message}}
+// (CommandBase::CreateErrorResponse shape). Anything else is reported
+// as "unexpected result shape" and counted as an error.
+
+BulkCreateElementsCommandBase::BulkCreateElementsCommandBase (
+    const GS::String& name,
+    std::shared_ptr<CreateElementsCommandBase> delegateIn)
+    : CommandBase (CommonSchema::Used)
+    , commandName (name)
+    , delegate (delegateIn)
+{
+}
+
+GS::String BulkCreateElementsCommandBase::GetName () const
+{
+    return commandName;
+}
+
+GS::Optional<GS::UniString> BulkCreateElementsCommandBase::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkCreateElementsCommandBase::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64":    { "type": "string"  },
+            "compression":    { "type": "string"  },
+            "created_count":  { "type": "integer" },
+            "errors_count":   { "type": "integer" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkCreateElementsCommandBase::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+    if (compression.empty ()) compression = "none";
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    nlohmann::json j;
+    try {
+        j = nlohmann::json::from_msgpack (raw);
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+
+    // Delegate owns the field name ("polylinesData", "wallsData", ...);
+    // looked up at Execute time so the bulk channel accepts the exact same
+    // payload shape as the matching JSON Create*Command.
+    const std::string fieldName = delegate->GetArrayFieldName ().ToCStr ().Get ();
+    if (!j.is_object () || !j.contains (fieldName) || !j[fieldName].is_array ()) {
+        const std::string msg = "payload must contain '" + fieldName + "' array";
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+
+    GS::Array<GS::ObjectState> dataArray;
+    for (const auto& item : j[fieldName]) {
+        if (item.is_object ()) {
+            const GS::ObjectState os = JsonToObjectState (item);
+            dataArray.Push (os);
+        }
+    }
+
+    const GS::Array<GS::ObjectState> perItem = delegate->CreateMany (dataArray);
+
+    nlohmann::ordered_json out;
+    out["per_source"]    = nlohmann::json::array ();
+    out["created_guids"] = nlohmann::json::array ();
+    out["created_count"] = static_cast<uint64_t> (0);
+    out["errors_count"]  = static_cast<uint64_t> (0);
+
+    size_t createdCount = 0;
+    size_t errorsCount  = 0;
+
+    const size_t n = static_cast<size_t> (perItem.GetSize ());
+    for (size_t i = 0; i < n; ++i) {
+        const GS::ObjectState& item = perItem[i];
+        nlohmann::ordered_json srcOut;
+        srcOut["index"] = static_cast<uint64_t> (i);
+
+        GS::ObjectState errorOs;
+        GS::ObjectState elementIdOs;
+        GS::UniString  guid;
+
+        if (item.Get ("error", errorOs)) {
+            int64_t code = 0;
+            errorOs.Get ("code", code);
+            GS::UniString msg;
+            errorOs.Get ("message", msg);
+            srcOut["ok"]    = false;
+            srcOut["error"] = nlohmann::ordered_json {
+                { "code",    code },
+                { "message", msg.ToCStr ().Get () }
+            };
+            ++errorsCount;
+        } else if (item.Get ("elementId", elementIdOs) && elementIdOs.Get ("guid", guid)) {
+            const std::string guidStr = guid.ToCStr ().Get ();
+            srcOut["ok"]   = true;
+            srcOut["guid"] = guidStr;
+            out["created_guids"].push_back (guidStr);
+            ++createdCount;
+        } else {
+            srcOut["ok"]    = false;
+            srcOut["error"] = nlohmann::ordered_json {
+                { "code",    static_cast<int64_t> (APIERR_BADPARS) },
+                { "message", "unexpected result shape" }
+            };
+            ++errorsCount;
+        }
+        out["per_source"].push_back (srcOut);
+    }
+
+    out["created_count"] = static_cast<uint64_t> (createdCount);
+    out["errors_count"]  = static_cast<uint64_t> (errorsCount);
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 =
+        EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64",   GS::UniString (outB64.c_str ()));
+    response.Add ("compression",   GS::UniString (outCompression.c_str ()));
+    response.Add ("created_count", static_cast<Int64> (createdCount));
+    response.Add ("errors_count",  static_cast<Int64> (errorsCount));
+    return response;
+}
+
+
+// ---------------------------------------------------------------------
+//  Concrete BulkCreate* constructors
+//
+//  One line each: construct the matching Create*Command as a shared_ptr
+//  delegate and hand it to the base. All per-item logic lives in the base
+//  (GetName / schemas / Execute) - nothing else to override.
+// ---------------------------------------------------------------------
+
+BulkCreatePolylinesCommand::BulkCreatePolylinesCommand ()
+    : BulkCreateElementsCommandBase ("BulkCreatePolylines", std::make_shared<CreatePolylinesCommand> ()) {}
+
+BulkCreateLineElementsCommand::BulkCreateLineElementsCommand ()
+    : BulkCreateElementsCommandBase ("BulkCreateLineElements", std::make_shared<CreateLineElementsCommand> ()) {}
+
+BulkCreateArcsCommand::BulkCreateArcsCommand ()
+    : BulkCreateElementsCommandBase ("BulkCreateArcs", std::make_shared<CreateArcsCommand> ()) {}
+
+BulkCreateCirclesCommand::BulkCreateCirclesCommand ()
+    : BulkCreateElementsCommandBase ("BulkCreateCircles", std::make_shared<CreateCirclesCommand> ()) {}
+
+BulkCreateSplinesCommand::BulkCreateSplinesCommand ()
+    : BulkCreateElementsCommandBase ("BulkCreateSplines", std::make_shared<CreateSplinesCommand> ()) {}
+
+BulkCreateHotspotsCommand::BulkCreateHotspotsCommand ()
+    : BulkCreateElementsCommandBase ("BulkCreateHotspots", std::make_shared<CreateHotspotsCommand> ()) {}
+
+BulkCreateHatchesCommand::BulkCreateHatchesCommand ()
+    : BulkCreateElementsCommandBase ("BulkCreateHatches", std::make_shared<CreateHatchesCommand> ()) {}
+
+BulkCreateTextsCommand::BulkCreateTextsCommand ()
+    : BulkCreateElementsCommandBase ("BulkCreateTexts", std::make_shared<CreateTextsCommand> ()) {}
+
+BulkCreateLabelsCommand::BulkCreateLabelsCommand ()
+    : BulkCreateElementsCommandBase ("BulkCreateLabels", std::make_shared<CreateLabelsCommand> ()) {}
+
+BulkCreateColumnsCommand::BulkCreateColumnsCommand ()
+    : BulkCreateElementsCommandBase ("BulkCreateColumns", std::make_shared<CreateColumnsCommand> ()) {}
+
+BulkCreateSlabsCommand::BulkCreateSlabsCommand ()
+    : BulkCreateElementsCommandBase ("BulkCreateSlabs", std::make_shared<CreateSlabsCommand> ()) {}
+
+BulkCreateZonesCommand::BulkCreateZonesCommand ()
+    : BulkCreateElementsCommandBase ("BulkCreateZones", std::make_shared<CreateZonesCommand> ()) {}
+
+BulkCreateObjectsCommand::BulkCreateObjectsCommand ()
+    : BulkCreateElementsCommandBase ("BulkCreateObjects", std::make_shared<CreateObjectsCommand> ()) {}
+
+BulkCreateLampsCommand::BulkCreateLampsCommand ()
+    : BulkCreateElementsCommandBase ("BulkCreateLamps", std::make_shared<CreateLampsCommand> ()) {}
+
+BulkCreateMeshesCommand::BulkCreateMeshesCommand ()
+    : BulkCreateElementsCommandBase ("BulkCreateMeshes", std::make_shared<CreateMeshesCommand> ()) {}
+
+BulkCreateWallsCommand::BulkCreateWallsCommand ()
+    : BulkCreateElementsCommandBase ("BulkCreateWalls", std::make_shared<CreateWallsCommand> ()) {}
+
+BulkCreateBeamsCommand::BulkCreateBeamsCommand ()
+    : BulkCreateElementsCommandBase ("BulkCreateBeams", std::make_shared<CreateBeamsCommand> ()) {}
+
+BulkCreateStairsCommand::BulkCreateStairsCommand ()
+    : BulkCreateElementsCommandBase ("BulkCreateStairs", std::make_shared<CreateStairsCommand> ()) {}
+
+
+// ---------------------------------------------------------------------
+//  BulkCreateElementsCommandBase
+// ---------------------------------------------------------------------
+//
 // Common Execute for all BulkCreate* commands. Wraps the matching
 // Create*Command's CreateMany (one undo, per-item errors) and reshapes
 // the per-item report into the standard bulk response:
