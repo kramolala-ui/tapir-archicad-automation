@@ -2509,7 +2509,7 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
                     const bool ok = ExtractElementMesh (subelemArray[i].head, applyTransform,
                                                         subV, subT, subErr,
                                                         outEdges != nullptr ? &subE : nullptr,
-                                                        parentForSubPtr);
+                                                        elementParentPtr);
                     if (!ok || subV.empty ()) continue;
                     const uint32_t base = static_cast<uint32_t> (outVertices.size () / 3);
                     outVertices.insert (outVertices.end (), subV.begin (), subV.end ());
