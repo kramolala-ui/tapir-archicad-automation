@@ -2927,11 +2927,12 @@ GS::ObjectState BulkGetElementMeshCommand::Execute (
             continue;
         }
 
-        std::vector<float> vertices;
+        std::vector<float>    vertices;
         std::vector<uint32_t> triangles;
+        std::vector<uint32_t> edges;
         std::string meshErr;
         const bool ok = ExtractElementMesh (element.header, applyTransform,
-                                            vertices, triangles, meshErr);
+                                            vertices, triangles, meshErr, &edges);
 
         if (ok) {
             ++withMeshCount;
@@ -2940,8 +2941,10 @@ GS::ObjectState BulkGetElementMeshCommand::Execute (
 
         row["vertexCount"]   = static_cast<uint64_t> (vertices.size () / 3);
         row["triangleCount"] = static_cast<uint64_t> (triangles.size () / 3);
+        row["edgeCount"]     = static_cast<uint64_t> (edges.size () / 2);
         row["vertices"]      = nlohmann::json::binary (FloatsToBytes (vertices));
         row["triangles"]     = nlohmann::json::binary (UIntsToBytes (triangles));
+        row["edges"]         = nlohmann::json::binary (UIntsToBytes (edges));
         row["error"]         = ok ? nlohmann::json (nullptr) : nlohmann::json (meshErr);
         out["rows"].push_back (row);
     }
