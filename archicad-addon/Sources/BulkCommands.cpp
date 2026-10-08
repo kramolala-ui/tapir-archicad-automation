@@ -2364,16 +2364,29 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
     }
 
     if (info3D.fbody <= 0 || info3D.lbody < info3D.fbody) {
-        errOut = "no solid bodies in element";
+        errOut = "no solid bodies in element (fbody=" +
+                 std::to_string (info3D.fbody) + " lbody=" +
+                 std::to_string (info3D.lbody) + ")";
         return false;
     }
+
+    // ---- Diagnostics: counters for the "empty mesh" answer ----
+    // They only feed the errOut string when the loop ends without triangles;
+    // when any polygon was accepted they cost a couple of Int32 increments
+    // per body and are otherwise invisible to the caller.
+    Int32 diagBodiesRead      = 0;
+    Int32 diagBodiesWithPgons = 0;
+    Int32 diagTotalPgons      = 0;
+    Int32 diagInvisPgons      = 0;
 
     for (Int32 iBody = info3D.fbody; iBody <= info3D.lbody; ++iBody) {
         API_Component3D bodyComp = {};
         bodyComp.header.typeID = API_BodyID;
         bodyComp.header.index  = iBody;
         if (ACAPI_ModelAccess_GetComponent (&bodyComp) != NoError) continue;
+        ++diagBodiesRead;
         if (bodyComp.body.nPgon == 0 || bodyComp.body.nVert == 0) continue;
+        ++diagBodiesWithPgons;
 
         const Int32 nVert = bodyComp.body.nVert;
         const Int32 nPgon = bodyComp.body.nPgon;
