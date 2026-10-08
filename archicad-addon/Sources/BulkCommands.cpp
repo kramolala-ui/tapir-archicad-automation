@@ -2606,12 +2606,16 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
         const Int32 nVert = bodyComp.body.nVert;
         const Int32 nPgon = bodyComp.body.nPgon;
         API_Tranmat bodyTran = bodyComp.body.tranmat;
-        // Композит с родительским transform (CurtainWall.planeMatrix /
-        // Stair.basePlane). Без него субэлементы иерархических типов
-        // позиционируются правильно, но с перепутанными осями.
-        if (applyTransform && parentTran != nullptr) {
+        // Композит с родительским transform. Источники:
+        //   hierarchical: elementParentPtr = planeMatrix / basePlane;
+        //   openingHosted: elementParentPtr = world transform of owner wall;
+        //   nested call: parentTran = caller-passed (для субэлементов);
+        //     если elementParentPtr не задан — используем его.
+        const API_Tranmat* bodyParent =
+            (elementParentPtr != nullptr) ? elementParentPtr : parentTran;
+        if (applyTransform && bodyParent != nullptr) {
             API_Tranmat combined;
-            MultiplyTranmat (*parentTran, bodyTran, combined);
+            MultiplyTranmat (*bodyParent, bodyTran, combined);
             bodyTran = combined;
         }
 
