@@ -1385,6 +1385,80 @@ GSErrCode Initialize (void)
             bulkCommands, "0.1.0",
             "Bulk-clone a donor text Label into N instances. Input payload: {sources?: [{source_guid, instances}], source_guid?, instances: [{beg_x, beg_y, mid_x?, mid_y?, end_x?, end_y?, text?, owner_guid?, story_index?, layer_index?}]}. Only text labels (labelClass=Text); symbol labels → error (use CreateLabels). Output payload: {per_source: [{source_guid, created_guids, errors}], created_guids, created_count, errors_count}. One undo barrier for the whole batch."
         );
+        // Bulk-create: same per-item payload as the matching Create*Command, delivered
+        // through the binary bulk channel. One undo barrier for the whole batch.
+        err |= RegisterCommand<BulkCreatePolylinesCommand> (
+            bulkCommands, "0.1.0",
+            "Bulk-create Polyline elements. Input: {polylinesData: [...]} - same per-item shape as CreatePolylines. Output: {per_source, created_guids, created_count, errors_count}."
+        );
+        err |= RegisterCommand<BulkCreateLineElementsCommand> (
+            bulkCommands, "0.1.0",
+            "Bulk-create Line elements. Input: {linesData: [...]} - same per-item shape as CreateLineElements. Output: {per_source, created_guids, created_count, errors_count}."
+        );
+        err |= RegisterCommand<BulkCreateArcsCommand> (
+            bulkCommands, "0.1.0",
+            "Bulk-create Arc elements. Input: {arcsData: [...]} - same per-item shape as CreateArcs. Output: {per_source, created_guids, created_count, errors_count}."
+        );
+        err |= RegisterCommand<BulkCreateCirclesCommand> (
+            bulkCommands, "0.1.0",
+            "Bulk-create Circle elements. Input: {circlesData: [...]} - same per-item shape as CreateCircles. Output: {per_source, created_guids, created_count, errors_count}."
+        );
+        err |= RegisterCommand<BulkCreateSplinesCommand> (
+            bulkCommands, "0.1.0",
+            "Bulk-create Spline elements. Input: {splinesData: [...]} - same per-item shape as CreateSplines. Output: {per_source, created_guids, created_count, errors_count}."
+        );
+        err |= RegisterCommand<BulkCreateHotspotsCommand> (
+            bulkCommands, "0.1.0",
+            "Bulk-create Hotspot elements. Input: {hotspotsData: [...]} - same per-item shape as CreateHotspots. Output: {per_source, created_guids, created_count, errors_count}."
+        );
+        err |= RegisterCommand<BulkCreateHatchesCommand> (
+            bulkCommands, "0.1.0",
+            "Bulk-create Hatch elements. Input: {hatchesData: [...]} - same per-item shape as CreateHatches. Output: {per_source, created_guids, created_count, errors_count}."
+        );
+        err |= RegisterCommand<BulkCreateTextsCommand> (
+            bulkCommands, "0.1.0",
+            "Bulk-create Text elements. Input: {textsData: [...]} - same per-item shape as CreateTexts. Output: {per_source, created_guids, created_count, errors_count}."
+        );
+        err |= RegisterCommand<BulkCreateLabelsCommand> (
+            bulkCommands, "0.1.0",
+            "Bulk-create Label elements. Input: {labelsData: [...]} - same per-item shape as CreateLabels. Output: {per_source, created_guids, created_count, errors_count}."
+        );
+        err |= RegisterCommand<BulkCreateColumnsCommand> (
+            bulkCommands, "0.1.0",
+            "Bulk-create Column elements. Input: {columnsData: [...]} - same per-item shape as CreateColumns. Output: {per_source, created_guids, created_count, errors_count}."
+        );
+        err |= RegisterCommand<BulkCreateSlabsCommand> (
+            bulkCommands, "0.1.0",
+            "Bulk-create Slab elements. Input: {slabsData: [...]} - same per-item shape as CreateSlabs. Output: {per_source, created_guids, created_count, errors_count}."
+        );
+        err |= RegisterCommand<BulkCreateZonesCommand> (
+            bulkCommands, "0.1.0",
+            "Bulk-create Zone elements. Input: {zonesData: [...]} - same per-item shape as CreateZones. Output: {per_source, created_guids, created_count, errors_count}."
+        );
+        err |= RegisterCommand<BulkCreateObjectsCommand> (
+            bulkCommands, "0.1.0",
+            "Bulk-create Object elements. Input: {objectsData: [...]} - same per-item shape as CreateObjects. Output: {per_source, created_guids, created_count, errors_count}."
+        );
+        err |= RegisterCommand<BulkCreateLampsCommand> (
+            bulkCommands, "0.1.0",
+            "Bulk-create Lamp elements. Input: {lampsData: [...]} - same per-item shape as CreateLamps. Output: {per_source, created_guids, created_count, errors_count}."
+        );
+        err |= RegisterCommand<BulkCreateMeshesCommand> (
+            bulkCommands, "0.1.0",
+            "Bulk-create Mesh elements. Input: {meshesData: [...]} - same per-item shape as CreateMeshes. Output: {per_source, created_guids, created_count, errors_count}."
+        );
+        err |= RegisterCommand<BulkCreateWallsCommand> (
+            bulkCommands, "0.1.0",
+            "Bulk-create Wall elements. Input: {wallsData: [...]} - same per-item shape as CreateWalls. Output: {per_source, created_guids, created_count, errors_count}."
+        );
+        err |= RegisterCommand<BulkCreateBeamsCommand> (
+            bulkCommands, "0.1.0",
+            "Bulk-create Beam elements. Input: {beamsData: [...]} - same per-item shape as CreateBeams. Output: {per_source, created_guids, created_count, errors_count}."
+        );
+        err |= RegisterCommand<BulkCreateStairsCommand> (
+            bulkCommands, "0.1.0",
+            "Bulk-create Stair elements. Input: {stairsData: [...]} - same per-item shape as CreateStairs. Output: {per_source, created_guids, created_count, errors_count}."
+        );
         AddCommandGroup (bulkCommands);
     }
 
