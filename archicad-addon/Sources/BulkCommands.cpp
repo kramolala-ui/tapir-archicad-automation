@@ -2902,10 +2902,12 @@ GS::ObjectState BulkGetElementMeshCommand::Execute (
             ? guidStr
             : APIGuidToString (guid).ToCStr ().Get ();
         if (guid == APINULLGuid) {
-            row["vertexCount"] = 0;
+            row["vertexCount"]   = 0;
             row["triangleCount"] = 0;
-            row["vertices"] = nlohmann::json::binary (std::vector<uint8_t> {});
+            row["edgeCount"]     = 0;
+            row["vertices"]  = nlohmann::json::binary (std::vector<uint8_t> {});
             row["triangles"] = nlohmann::json::binary (std::vector<uint8_t> {});
+            row["edges"]     = nlohmann::json::binary (std::vector<uint8_t> {});
             row["error"] = "invalid guid";
             out["rows"].push_back (row);
             continue;
