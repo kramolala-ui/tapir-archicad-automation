@@ -1,6 +1,7 @@
 #include "BulkCommands.hpp"
 #include "MigrationHelper.hpp"
 #include "ElementCreationCommands.hpp"
+#include "ExtendedElementCommands.hpp"
 #include "PropertyConversionUtils.hpp"
 
 // BulkGetElementMesh использует низкоуровневый 3D-component API
