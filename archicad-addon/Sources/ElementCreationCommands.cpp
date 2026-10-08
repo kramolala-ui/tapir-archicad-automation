@@ -33,13 +33,9 @@ GS::Optional<GS::UniString> CreateElementsCommandBase::GetRawResponseSchema () c
     })";
 }
 
-GS::ObjectState	CreateElementsCommandBase::Execute (const GS::ObjectState& parameters, GS::ProcessControl& /*processControl*/) const
+GS::ObjectState	CreateElementsCommandBase::CreateMany (const GS::Array<GS::ObjectState>& dataArray) const
 {
-    GS::Array<GS::ObjectState> dataArray;
-    parameters.Get (arrayFieldName, dataArray);
-
-    GS::ObjectState response;
-    const auto& elements = response.AddList<GS::ObjectState> ("elements");
+    GS::Array<GS::ObjectState> results;
 
     const GS::UniString elemTypeName = GetElementTypeNonLocalizedName (elemTypeID);
     const Stories stories = GetStories ();
