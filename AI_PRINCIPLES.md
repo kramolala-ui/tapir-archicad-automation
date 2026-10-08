@@ -2392,6 +2392,134 @@ forward-decl появился `= nullptr`, но в **AC27+ определени�
 - AC27+ mesh — graceful stub (не поддерживается, `ACAPI_ModelAccess_*`
   aliases не эмитируются MigrationHelper.hpp).
 
+### Сессия 2026-10-08 (продолжение) — композит родительского transform, north angle
+
+#### Принцип: north angle и geo offsets НЕ применять к mesh-transform
+
+У проекта есть `Project North Angle` (например, 128.413461553502° — 12 значащих
+цифр) и `Deviation East/North` в метрах (например, 483493 / 848451 — это
+GIS-координаты площадки). Они **не должны** попадать в transform вершин.
+
+Почему:
+
+- Archicad хранит element geometry в **project coordinate system**, а не в
+  world-with-north. Ни `element.column.origoPos`, ни `body.tranmat`, ни
+  `ACAPI_Element_CalcBounds` north angle не учитывают.
+- North angle — это display/GIS-метаданные. Offset East/North — то же
+  (реальные геодезические координаты площадки).
+- Если применить `world = R_north(θ) · T_offset · project_coords` на
+  практике получаем катастрофу: при координатах 500 000 м погрешность
+  float32 ~30 мкм, но на **каждом объекте** она своя, и на **десятках
+  тысяч объектов** compound-ошибка даёт 1-1.5 м «расползания» сцены.
+  Это **баг Archicad** (в её собственном storage та же ошибка), но
+  **мы не обязаны добавлять свою**.
+
+Правило: north angle / offset читаются только в metadata-слой (например,
+для будущего GIS-export). **Не пропускать через transform вершин**.
+Мы это правило и так соблюдали — важно зафиксировать, чтобы случайно
+не сломать в будущем.
+
+#### Композит родительского transform (CurtainWall + Stair)
+
+Установлено: `body.tranmat` субэлементов иерархических типов у части
+типов **локальный** (не учитывает поворот/отражение родителя).
+
+Структуры DevKit (`APIdefs_Elements.h`, `APIdefs_Base.h`) дают готовые
+родительские матрицы:
+
+- **`API_CurtainWallType.planeMatrix`** (`API_Tranmat`) — базисная
+  плоскость CW. Даёт полный local→world переход для субэлементов.
+- **`API_StairType.basePlane`** (`API_Plane3D`: `basePoint`, `axisX/Y/Z`) —
+  конвертируется в `API_Tranmat` тривиально.
+- **`API_MorphType`** — есть `origin` + `xAxis/yAxis/zAxis`, но у Morph
+  тело `body.tranmat` **сам по себе битый** (см. ниже), отдельная задача.
+- **Column, Beam** — работают без композита (их `body.tranmat` мировой).
+- **Railing** — в `API_RailingType` **нет** `origin/angle/begC/endC`,
+  только `defNode`/`defSegment`/`nNodes`/`nSegments`. Родительский
+  transform не выведен в API — отложено.
+- **Window / Door** — `ownerElementId` (Wall-хозяин). Композит с Wall
+  запланирован отдельно.
+
+`API_Tranmat` = `double tmx[12]` (3×4, 4-я неявная строка (0,0,0,1)).
+Композит `out = a · b` реализуется через `MultiplyTranmat`.
+
+Патч (в работе, компилируется на AC25/26/27+):
+
+1. `MultiplyTranmat(a, b, out)` — 3×4 · 3×4 → 3×4.
+2. `TranmatFromPlane3D(API_Plane3D, API_Tranmat&)` — для Stair.
+3. `ExtractElementMesh` получает 7-й аргумент `const API_Tranmat* parentTran = nullptr`
+   (default только в forward-decl).
+4. В expand-блоке: `tid == CurtainWall → parentTran = element.curtainWall.planeMatrix`;
+   `tid == Stair → TranmatFromPlane3D(element.stair.basePlane)`.
+   Передаётся в рекурсию `appendSub`.
+5. В цикле по body: `bodyTran = parentTran · bodyTran` (если задан).
+
+#### Матрица типов (mesh-bbox vs Tapir-bbox, проект 19723, AC26)
+
+| Тип          | maxdiff | Status           | Примечание |
+|---|---|---|---|
+| Column       | 0.000   | ✅ OK            | композит не нужен |
+| Beam         | 0.000   | ✅ OK            | композит не нужен |
+| Roof         | 0.000   | ✅ OK            | |
+| Slab         | 0.000   | ✅ OK            | |
+| Zone         | 0.000   | ✅ OK            | |
+| Stair [2/2]  | 0.000   | ✅ OK            | у одного из двух |
+| Wall         | 0.16–0.45 | ⚠ small drift  | не north — отдельный случай |
+| CurtainWall  | 0.84–1.44 | ❌ MISMATCH      | композит с planeMatrix — в патче |
+| Stair [1/2]  | 3.00    | ❌ MISMATCH      | возможен flip по basePlane.axisX |
+| Window       | 1.51    | ❌ MISMATCH      | композит с owner-Wall |
+| Door         | 1.90–1.96 | ❌ MISMATCH    | композит с owner-Wall |
+| Railing      | 1.70–2.00 | ❌ MISMATCH    | transform не выведен в API |
+| Morph        | **335** | ❌ CRITICAL      | `body.tranmat` битый |
+
+**Выводы:**
+
+- **Совпадают (0)**: Column, Beam, Roof, Slab, Zone, Stair[2/2] — их
+  `body.tranmat` мировой, композит не нужен.
+- **MISMATCH 1–3 м (нужен композит)**: CurtainWall, Stair[1/2],
+  Window, Door, Railing.
+- **CRITICAL 335 м**: Morph — `body.tranmat` физически указывает в другую
+  точку мира (`world = (-545, 100)` при Tapir `(-215, -196)`, при том что
+  `local = (-244, -270)`). Отдельный трек.
+- **Wall small drift** — x/z совпадают, min-Y отличается на 0.16–0.45 м.
+  Гипотеза: joint filler в теле стены (GDL-деталь для стыков) — Tapir
+  bbox через `CalcBounds` его не учитывает, mesh — учитывает. Не north.
+
+#### Локальные координаты (для справки)
+
+Полезно смотреть `apply_transform=False` для понимания, в какой системе
+приходят субэлементы:
+
+- **CurtainWall frame** `769037EA`: local center = (0, -0.007, 0.391),
+  длинная ось — local Z (0.73 м). Правильный мировой — длинная ось Y.
+- **CurtainWall panel** `140AACAA`: local center = (-0.391, 0.617, -0.003).
+- **Stair** local: `x ∈ [-1.2, 0]` (BAD) vs `x ∈ [0, 1.2]` (OK) — зеркало.
+- **Window** local: `x ∈ [-0.9, 0.98] y ∈ [0, 1.84] z ∈ [-0.02, 0.08]` —
+  окно по центру, толщина 0.1 м по Z. Правильная мировая ориентация —
+  толщина по X (вдоль толщины стены).
+
+#### Morph — почему битый `body.tranmat`
+
+Для Morph `8B2C6268` (id пустой, layer 2, floor 0):
+
+    details: origin=(-189.18, 164.06, 0), axes ортонормированные
+    apply=False: x=[-244.24, -238.42] y=[-270.32, -265.07] z=[2.52, 2.80]
+    apply=True:  x=[-545.58, -543.62] y=[100.69, 107.82]  z=[2.52, 2.80]
+    tapir:       x=[-215.52, -208.37] y=[-196.18, -195.09] z=[2.52, 2.80]
+
+Local mesh уже не около 0 — а сам `body.tranmat` даёт +371 м по Y.
+Это не наша ошибка: ACAPI-тело Morph позиционируется через отдельный
+путь (вероятно, через `Modeler::MeshBody` или `MorphMesh` с собственной
+базовой плоскостью, не эквивалентной `body.tranmat`). Отдельный трек —
+читать Morph через `ACAPI_Element_GetMemo` + `APIMemoMask_MorphBody` или
+через ModelerAPI вместо `ACAPI_ModelAccess_Get3DInfo`.
+
+#### Что отменено
+
+Трек «float32 → origin + float32 offsets» — **отменён**. Без применения
+north angle/geo offsets вычислительные координаты уже в project space
+(<1000 м), float32 точен до микрона, ошибки накопления нет.
+
 ---
 
 ## 11. Контакты и ссылки
