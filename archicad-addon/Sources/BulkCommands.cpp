@@ -3681,6 +3681,14 @@ GS::ObjectState BulkCloneElementCommand::Execute (
                 if (inst.contains ("pos_y"))  el.object.pos.y = inst["pos_y"].get<double> ();
                 if (inst.contains ("level"))  el.object.level = inst["level"].get<double> ();
                 if (inst.contains ("angle"))  el.object.angle = inst["angle"].get<double> ();
+                // reflected — флаг зеркалирования GDL-объекта. Без него
+                // зеркальные копии не создаются: донор зеркальный, и все
+                // его клоны копируют его ориентацию; из не-зеркального
+                // донора получить зеркальную копию было нельзя.
+                // ACAPI_Element_Create копирует всю структуру API_ObjectType,
+                // поэтому присвоения перед вызовом достаточно (маска не
+                // нужна — Create пишет целиком).
+                if (inst.contains ("reflected")) el.object.reflected = inst["reflected"].get<bool> ();
 
                 API_ElementMemo memo = {};
                 if (ACAPI_Element_GetMemo (srcGuid, &memo, kAllMemoMask) != NoError) {
