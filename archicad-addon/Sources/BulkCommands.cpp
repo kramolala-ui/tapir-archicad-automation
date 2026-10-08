@@ -3209,6 +3209,7 @@ GS::ObjectState BulkGetElementMeshCommand::Execute (
             row["vertexCount"]   = 0;
             row["triangleCount"] = 0;
             row["edgeCount"]     = 0;
+            row["has_3d"]        = false;
             row["vertices"]  = nlohmann::json::binary (std::vector<uint8_t> {});
             row["triangles"] = nlohmann::json::binary (std::vector<uint8_t> {});
             row["edges"]     = nlohmann::json::binary (std::vector<uint8_t> {});
