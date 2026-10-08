@@ -130,7 +130,7 @@ GS::ObjectState	CreateElementsCommandBase::CreateMany (const GS::Array<GS::Objec
 
             auto os = SetTypeSpecificParameters (element, memo, stories, data);
             if (os.HasValue ()) {
-                elements (*os);
+                results.Push (*os);
                 continue;
             }
 
