@@ -2520,6 +2520,39 @@ Local mesh уже не около 0 — а сам `body.tranmat` даёт +371 �
 north angle/geo offsets вычислительные координаты уже в project space
 (<1000 м), float32 точен до микрона, ошибки накопления нет.
 
+#### Backlog — следующая сессия
+
+1. **2D-символ для Object / Lamp.** Сейчас у GDL-объекта читается только
+   3D-тело (`ExtractElementMesh`), а 2D-скрипт (то, что видно на плане)
+   — нет. Без этого нельзя показать в программе 2D-план Archicad-проекта
+   (кабели, щиты, оборудование рисуются на плане символами, а не 3D-телами).
+
+   План: `ACAPI_Element_GetMemo(guid, &memo, APIMemoMask_Symbol2D)` →
+   `memo.symbol2D` содержит `nLine` / `nArc` / `nPolyLine` / `nHatch` /
+   `nText` / `nSpline` / `nHotspot` (каждая коллекция — handle с массивом).
+   Отдельная функция `Collect2DSymbolToJson` (~300-500 строк C++).
+   Включать флагом `with_2d_symbol=true` в payload — чтобы не гонять
+   на всех 63k Object'ах.
+
+2. **Morph — обход `body.tranmat`.** У Morph `body.tranmat` физически
+   указывает в другую точку мира (world уезжает на +371 м по Y).
+   Читать через `ACAPI_Element_GetMemo` + `APIMemoMask_MorphBody` или
+   через ModelerAPI вместо `ACAPI_ModelAccess_Get3DInfo`. Отдельный трек.
+
+3. **Railing — transform не выведен в API.** В `API_RailingType` нет
+   полей `origin` / `angle` / `begC` / `endC` — только `defNode` /
+   `defSegment` / `nNodes` / `nSegments`. Родительский transform, вероятно,
+   берётся из первого `railingNode` (в memo) — но это гипотеза.
+
+4. **дп007 / LabPP_InsolationGraph — hidden GDL transform.** Часть GDL-
+   объектов сдвигает геометрию внутри скрипта, не через `element.object.*`.
+   Клиентский обход: по `object_lib_part_index` из чёрного списка — брать
+   `Tapir bbox` вместо mesh. Не критично (несколько библиотек).
+
+5. **Флаг `has_3d` в row.** Добавлен в патче 2026-10-08 (см. §10b выше).
+   После пересборки — клиенту заменить парсинг `err-строки 'empty mesh'`
+   на проверку `row['has_3d']`.
+
 ---
 
 ## 11. Контакты и ссылки
