@@ -1204,7 +1204,7 @@ void Collect2DGeometryToJson (const API_Element& element, nlohmann::ordered_json
             g["room_separator"] = element.line.roomSeparator;
             g["line_pen_index"] = element.line.linePen.penIndex;
             g["line_type_id"]   = APIGuidToString (GetAttributeGuidFromIndex (API_LinetypeID, element.line.ltypeInd)).ToCStr ().Get ();
-            g["z_coordinate"]   = static_cast<int> (element.header.floorInd);
+            g["z_coordinate"]   = GetStoryLevelZ (element.header.floorInd);
         } break;
 
         case API_ArcID:
