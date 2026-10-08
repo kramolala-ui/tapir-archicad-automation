@@ -2448,33 +2448,55 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
             tid == API_CurtainWallID ||
             tid == API_StairID ||
             tid == API_RailingID;
+        const bool openingHosted =
+            tid == API_WindowID ||
+            tid == API_DoorID ||
+            tid == API_SkylightID ||
+            tid == API_OpeningID;
 
-        if (hierarchical) {
-            // Родительский transform для субэлементов. У CurtainWall и
-            // Stair он лежит прямо в структуре (planeMatrix / basePlane);
-            // для остальных пока null — субэлементы идут как есть.
-            //
-            // Зачем: body.tranmat субэлемента CurtainWall'а НЕ учитывает
-            // поворот родителя (angle / flipped). Из-за этого фреймы и
-            // панели витража выходят с перепутанными осями — local Z
-            // уходит в мировой X, local X — в мировой Y. Композит с
-            // planeMatrix выправляет ориентацию.
-            API_Tranmat parentForSub = {};
-            const API_Tranmat* parentForSubPtr = nullptr;
-            {
-                API_Element topElem = {};
-                topElem.header = elemHead;
-                if (ACAPI_Element_Get (&topElem) == NoError) {
-                    if (tid == API_CurtainWallID) {
-                        parentForSub = topElem.curtainWall.planeMatrix;
-                        parentForSubPtr = &parentForSub;
-                    } else if (tid == API_StairID) {
-                        TranmatFromPlane3D (topElem.stair.basePlane, parentForSub);
-                        parentForSubPtr = &parentForSub;
+        // ---- Parent transform для current элемента --------------------
+        // Computed once at this scope so both recursion (appendSub, for
+        // hierarchical) and body loop (for openingHosted) can use it.
+        //
+        // Источники:
+        //   CurtainWall  -> element.curtainWall.planeMatrix
+        //   Stair        -> TranmatFromPlane3D(element.stair.basePlane)
+        //   Window/Door/Skylight/Opening -> world transform of owner wall
+        //                 (first body.tranmat owner-элемента)
+        //
+        // Почему это нужно: body.tranmat субэлементов CurtainWall'а и тела
+        // окон/дверей заданы в ЛОКАЛЬНОЙ системе родителя, а не в мировой.
+        // Без композита фреймы витража выходят с перепутанными осями
+        // (local Z -> world X, local X -> world Y), а окна/двери целиком
+        // лежат плашмя в системе стены.
+        API_Tranmat elementParentTran = {};
+        const API_Tranmat* elementParentPtr = nullptr;
+        if (hierarchical || openingHosted) {
+            API_Element topElem = {};
+            topElem.header = elemHead;
+            if (ACAPI_Element_Get (&topElem) == NoError) {
+                if (tid == API_CurtainWallID) {
+                    elementParentTran = topElem.curtainWall.planeMatrix;
+                    elementParentPtr = &elementParentTran;
+                } else if (tid == API_StairID) {
+                    TranmatFromPlane3D (topElem.stair.basePlane, elementParentTran);
+                    elementParentPtr = &elementParentTran;
+                } else if (openingHosted) {
+                    API_Guid ownerGuid = APINULLGuid;
+                    if (tid == API_WindowID)         ownerGuid = topElem.window.owner;
+                    else if (tid == API_DoorID)      ownerGuid = topElem.door.owner;
+                    else if (tid == API_SkylightID)  ownerGuid = topElem.skylight.owner;
+                    else if (tid == API_OpeningID)   ownerGuid = topElem.opening.owner;
+                    if (ownerGuid != APINULLGuid) {
+                        if (GetOwnerWorldTranmat (ownerGuid, elementParentTran)) {
+                            elementParentPtr = &elementParentTran;
+                        }
                     }
                 }
             }
+        }
 
+        if (hierarchical) {
             auto appendSub = [&] (auto* subelemArray) -> bool {
                 if (subelemArray == nullptr) return false;
                 const GSSize n = BMGetPtrSize (reinterpret_cast<GSPtr> (subelemArray)) / sizeof (*subelemArray);
