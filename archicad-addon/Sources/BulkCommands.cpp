@@ -1105,6 +1105,12 @@ void ResetStoryLevelCache ()
 
 double GetStoryLevelZ (short floorInd)
 {
+#if !defined (ServerMainVers_2700)
+    // На AC25/26 ACAPI_Environment и APIEnv_GetStorySettingsID доступны
+    // через ACAPinc.h. На AC27+ alias в MigrationHelper.hpp отсутствует —
+    // тот же случай, что и ACAPI_ModelAccess_Get3DInfo (см. §4f
+    // AI_PRINCIPLES про mesh-stub). Fallback — старое поведение
+    // (z_coordinate = floorInd).
     if (!g_storyCacheLoaded) {
         API_StoryInfo si = {};
         if (ACAPI_Environment (APIEnv_GetStorySettingsID, &si, nullptr) == NoError
@@ -1119,7 +1125,8 @@ double GetStoryLevelZ (short floorInd)
     }
     auto it = g_storyLevelZ.find (floorInd);
     if (it != g_storyLevelZ.end ()) return it->second;
-    // Fallback — старое поведение (индекс этажа, не Z).
+#endif
+    // Fallback (AC27+ или этаж не найден): старое поведение — индекс этажа.
     return static_cast<double> (floorInd);
 }
 
