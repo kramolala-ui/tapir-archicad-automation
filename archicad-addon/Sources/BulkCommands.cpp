@@ -310,21 +310,31 @@ GS::ObjectState JsonToObjectState (const nlohmann::json& j)
         } else if (v.is_number_float ()) {
             out.Add (key.c_str (), v.get<double> ());
         } else if (v.is_array ()) {
-            GS::Array<GS::ObjectState> arr;
+            // GS::ObjectState has no Add(name, GS::Array<...>) overload -
+            // arrays of objects go through AddList<GS::ObjectState>(name),
+            // which returns a reference the elements are pushed into with
+            // the call operator (same pattern as CreateElementsCommandBase::
+            // Execute pushing into "elements").
+            const auto& list = out.AddList<GS::ObjectState> (key.c_str ());
             for (const auto& el : v) {
                 if (el.is_object ()) {
-                    arr.Push (JsonToObjectState (el));
+                    const GS::ObjectState nested = JsonToObjectState (el);
+                    list (nested);
                 } else if (el.is_string ()) {
-                    arr.Push (GS::ObjectState ("value", GS::UniString (el.get<std::string> ().c_str ())));
-                } else if (el.is_number ()) {
-                    arr.Push (GS::ObjectState ("value", el.get<double> ()));
+                    list (GS::ObjectState ("value", GS::UniString (el.get<std::string> ().c_str ())));
+                } else if (el.is_number_float ()) {
+                    list (GS::ObjectState ("value", el.get<double> ()));
+                } else if (el.is_number_integer ()) {
+                    list (GS::ObjectState ("value", static_cast<Int64> (el.get<int64_t> ())));
+                } else if (el.is_number_unsigned ()) {
+                    list (GS::ObjectState ("value", static_cast<Int64> (el.get<uint64_t> ())));
                 } else if (el.is_boolean ()) {
-                    arr.Push (GS::ObjectState ("value", el.get<bool> ()));
+                    list (GS::ObjectState ("value", el.get<bool> ()));
                 }
             }
-            out.Add (key.c_str (), arr);
         } else if (v.is_object ()) {
-            out.Add (key.c_str (), JsonToObjectState (v));
+            const GS::ObjectState nested = JsonToObjectState (v);
+            out.Add (key.c_str (), nested);
         }
     }
     return out;
