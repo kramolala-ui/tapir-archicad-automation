@@ -2916,10 +2916,12 @@ GS::ObjectState BulkGetElementMeshCommand::Execute (
         API_Element element = {};
         element.header.guid = guid;
         if (ACAPI_Element_Get (&element) != NoError) {
-            row["vertexCount"] = 0;
+            row["vertexCount"]   = 0;
             row["triangleCount"] = 0;
-            row["vertices"] = nlohmann::json::binary (std::vector<uint8_t> {});
+            row["edgeCount"]     = 0;
+            row["vertices"]  = nlohmann::json::binary (std::vector<uint8_t> {});
             row["triangles"] = nlohmann::json::binary (std::vector<uint8_t> {});
+            row["edges"]     = nlohmann::json::binary (std::vector<uint8_t> {});
             row["error"] = "element not found";
             out["rows"].push_back (row);
             continue;
