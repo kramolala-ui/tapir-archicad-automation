@@ -2606,11 +2606,35 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
         const Int32 nVert = bodyComp.body.nVert;
         const Int32 nPgon = bodyComp.body.nPgon;
         API_Tranmat bodyTran = bodyComp.body.tranmat;
+
+        // ---- Object / Lamp: body.tranmat даёт неверную rotation ------
+        // На AC26 у свободных Object/Lamp (маркеры сетки, символы MEP,
+        // GDL-объекты) body.tranmat поворачивает на ~180° не туда: маркер
+        // оси длиной 70 м уезжает в противоположную сторону. При этом
+        // translation (tmx[3], tmx[7], tmx[11]) корректный — включает
+        // базовую Z этажа. Rotation корректно лежит в element.object.angle.
+        // Scale (xRatio/yRatio) и reflected уже встроены в local mesh —
+        // local вершины приходят в единицах модели, повторно применять
+        // их нельзя (получим ×3 размеры у объектов с ratio≠1).
+        if (applyTransform && (tid == API_ObjectID || tid == API_LampID)) {
+            API_Element objElem = {};
+            objElem.header.guid = elemHead.guid;
+            if (ACAPI_Element_Get (&objElem) == NoError) {
+                const double a  = objElem.object.angle;
+                const double ca = std::cos (a);
+                const double sa = std::sin (a);
+                API_Tranmat m = {};
+                m.tmx[0] =  ca; m.tmx[1] = -sa; m.tmx[2]  = 0.0; m.tmx[3]  = bodyTran.tmx[3];
+                m.tmx[4] =  sa; m.tmx[5] =  ca; m.tmx[6]  = 0.0; m.tmx[7]  = bodyTran.tmx[7];
+                m.tmx[8] = 0.0; m.tmx[9] = 0.0; m.tmx[10] = 1.0; m.tmx[11] = bodyTran.tmx[11];
+                bodyTran = m;
+            }
+        }
+
         // Композит с родительским transform. Источники:
         //   hierarchical: elementParentPtr = planeMatrix / basePlane;
         //   openingHosted: elementParentPtr = world transform of owner wall;
-        //   nested call: parentTran = caller-passed (для субэлементов);
-        //     если elementParentPtr не задан — используем его.
+        //   nested call: parentTran = caller-passed (для субэлементов).
         const API_Tranmat* bodyParent =
             (elementParentPtr != nullptr) ? elementParentPtr : parentTran;
         if (applyTransform && bodyParent != nullptr) {
