@@ -96,7 +96,7 @@ GS::ObjectState	CreateElementsCommandBase::CreateMany (const GS::Array<GS::Objec
                 if (hasFavoriteName) {
                     const GSErrCode favoriteErr = ApplyFavoriteToElementDefaults (favoriteName, elemTypeID);
                     if (favoriteErr != NoError) {
-                        elements (CreateErrorResponse (favoriteErr,
+                        results.Push (CreateErrorResponse (favoriteErr,
                             "Failed to apply favoriteName '" + favoriteName + "' to the " + elemTypeName + " defaults."));
                         continue;
                     }
