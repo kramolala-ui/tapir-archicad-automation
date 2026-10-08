@@ -2361,7 +2361,7 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
                          std::vector<float>& outVertices,
                          std::vector<uint32_t>& outTriangles,
                          std::string& errOut,
-                         std::vector<uint32_t>* outEdges = nullptr)
+                         std::vector<uint32_t>* outEdges)
 {
     outVertices.clear ();
     outTriangles.clear ();
