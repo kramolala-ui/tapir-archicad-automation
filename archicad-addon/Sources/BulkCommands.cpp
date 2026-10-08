@@ -1762,6 +1762,10 @@ GS::ObjectState BulkGetElementDataCommand::Execute (
             params["object_angle"]  = element.object.angle;
             params["object_x_ratio"] = element.object.xRatio;
             params["object_y_ratio"] = element.object.yRatio;
+            // Зеркалирование. При Mirror Archicad поворачивает объект
+            // (обычно на 180°), но клиент не может восстановить отражение
+            // только по angle — нужно отдельное поле.
+            params["object_reflected"] = element.object.reflected;
             // Имя libPart — для переноса между проектами (индексы
             // разные, а имя стабильно).
             //
