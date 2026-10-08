@@ -2357,6 +2357,94 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
     outTriangles.clear ();
     if (outEdges != nullptr) outEdges->clear ();
 
+    // ---- Expand hierarchical types -------------------------------------
+    // Top-level Column / Beam / CurtainWall / Stair / Railing has no solid
+    // body of its own: ACAPI_ModelAccess_Get3DInfo returns an empty range,
+    // the entire geometry is spread over subelements (memo.columnSegments,
+    // memo.cWallFrames, memo.stairTreads, memo.railingRails, ...). Same
+    // picture as GetSubelementsOfHierarchicalElements uses (ElementCommands.
+    // cpp), only we walk the memo directly and merge the subelement meshes
+    // here. Subelements are appended with an index offset so triangle and
+    // edge indices keep pointing at the right vertices in the merged mesh.
+    // Wall / Slab / Roof / Mesh / Object / Lamp / Morph / Zone are left
+    // alone: they have their own solid bodies and the existing Get3DInfo
+    // path handles them.
+    {
+        const API_ElemTypeID tid = GetElemTypeId (elemHead);
+        const bool hierarchical =
+            tid == API_ColumnID ||
+            tid == API_BeamID ||
+            tid == API_CurtainWallID ||
+            tid == API_StairID ||
+            tid == API_RailingID;
+
+        if (hierarchical) {
+            auto appendSub = [&] (auto* subelemArray) -> bool {
+                if (subelemArray == nullptr) return false;
+                const GSSize n = BMGetPtrSize (reinterpret_cast<GSPtr> (subelemArray)) / sizeof (*subelemArray);
+                bool any = false;
+                for (GSIndex i = 0; i < n; ++i) {
+                    std::vector<float>    subV;
+                    std::vector<uint32_t> subT;
+                    std::vector<uint32_t> subE;
+                    std::string subErr;
+                    const bool ok = ExtractElementMesh (subelemArray[i].head, applyTransform,
+                                                        subV, subT, subErr,
+                                                        outEdges != nullptr ? &subE : nullptr);
+                    if (!ok || subV.empty ()) continue;
+                    const uint32_t base = static_cast<uint32_t> (outVertices.size () / 3);
+                    outVertices.insert (outVertices.end (), subV.begin (), subV.end ());
+                    for (uint32_t idx : subT) outTriangles.push_back (idx + base);
+                    if (outEdges != nullptr) {
+                        for (uint32_t idx : subE) outEdges->push_back (idx + base);
+                    }
+                    any = true;
+                }
+                return any;
+            };
+
+            API_ElementMemo memo = {};
+            const GS::OnExit memoGuard ([&memo] () { ACAPI_DisposeElemMemoHdls (&memo); });
+            if (ACAPI_Element_GetMemo (elemHead.guid, &memo, APIMemoMask_All) == NoError) {
+                bool any = false;
+                any |= appendSub (memo.columnSegments);
+                any |= appendSub (memo.beamSegments);
+
+                any |= appendSub (memo.cWallSegments);
+                any |= appendSub (memo.cWallFrames);
+                any |= appendSub (memo.cWallPanels);
+                any |= appendSub (memo.cWallJunctions);
+                any |= appendSub (memo.cWallAccessories);
+
+                any |= appendSub (memo.stairRisers);
+                any |= appendSub (memo.stairTreads);
+                any |= appendSub (memo.stairStructures);
+
+                any |= appendSub (memo.railingNodes);
+                any |= appendSub (memo.railingSegments);
+                any |= appendSub (memo.railingPosts);
+                any |= appendSub (memo.railingRailEnds);
+                any |= appendSub (memo.railingRailConnections);
+                any |= appendSub (memo.railingHandrailEnds);
+                any |= appendSub (memo.railingHandrailConnections);
+                any |= appendSub (memo.railingToprailEnds);
+                any |= appendSub (memo.railingToprailConnections);
+                any |= appendSub (memo.railingRails);
+                any |= appendSub (memo.railingToprails);
+                any |= appendSub (memo.railingHandrails);
+                any |= appendSub (memo.railingPatterns);
+                any |= appendSub (memo.railingInnerPosts);
+                any |= appendSub (memo.railingPanels);
+                any |= appendSub (memo.railingBalusterSets);
+                any |= appendSub (memo.railingBalusters);
+
+                if (any && !outVertices.empty ()) {
+                    return true;
+                }
+            }
+        }
+    }
+
     API_ElemInfo3D info3D = {};
     const GSErrCode infoErr = ACAPI_ModelAccess_Get3DInfo (elemHead, &info3D);
     if (infoErr != NoError) {
