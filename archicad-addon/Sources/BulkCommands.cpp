@@ -4853,6 +4853,27 @@ GS::ObjectState BulkSetElementDataCommand::Execute (
                 const std::string key = it.key ();
                 const auto& val = it.value ();
 
+                // ---- object_reflected: флаг зеркалирования GDL-объекта ---
+                // Отдельным if, а не новым case в enum SetKeyKind: ключ
+                // применим только к Object/Lamp, не к 8 категориям
+                // существующего switch. Симметрично чтению
+                // element.object.reflected в parameters (CollectElementData).
+                if (key == "object_reflected" || key == "reflected") {
+                    if (!val.is_boolean ()) {
+                        nlohmann::ordered_json e;
+                        e["key"] = key; e["msg"] = "expected boolean";
+                        srcOut["errors"].push_back (e); ++errorsCount;
+                    } else if (!IsObjectLike (element)) {
+                        srcOut["ignored_unknown"].push_back (key);
+                    } else {
+                        element.object.reflected = val.get<bool> ();
+                        ACAPI_ELEMENT_MASK_SET (mask, API_ObjectType, reflected);
+                        hasElementChanges = true;
+                        srcOut["applied"].push_back (key);
+                    }
+                    continue;
+                }
+
                 switch (DetectSetKeyKind (key)) {
                     case SetKeyKind::Story: {
                         if (!val.is_number_integer ()) {
