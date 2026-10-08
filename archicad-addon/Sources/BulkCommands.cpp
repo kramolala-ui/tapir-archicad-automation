@@ -2350,10 +2350,12 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
                          bool applyTransform,
                          std::vector<float>& outVertices,
                          std::vector<uint32_t>& outTriangles,
-                         std::string& errOut)
+                         std::string& errOut,
+                         std::vector<uint32_t>* outEdges = nullptr)
 {
     outVertices.clear ();
     outTriangles.clear ();
+    if (outEdges != nullptr) outEdges->clear ();
 
     API_ElemInfo3D info3D = {};
     const GSErrCode infoErr = ACAPI_ModelAccess_Get3DInfo (elemHead, &info3D);
