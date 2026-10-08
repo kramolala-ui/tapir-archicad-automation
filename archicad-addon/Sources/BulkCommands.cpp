@@ -1085,6 +1085,44 @@ struct ElementDataOptions {
 // Заполняет out["geometry"] 2D-геометрией элемента (PolyLine / Line / Arc /
 // Circle / Hatch / Label / Text / Hotspot). Имена ключей совпадают с теми,
 // что отдаёт GetDetailsOfElements — единый контракт для per-element и bulk.
+// ---- Story level cache: floorInd → Z в метрах --------------------
+// Collect2DGeometryToJson кладёт в z_coordinate мировую Z (в метрах),
+// а не индекс этажа. Tapir GetDetailsOfElements отдаёт zCoordinate в
+// метрах — чтобы контракт совпадал, читаем уровень через
+// APIEnv_GetStorySettingsID. Кэш живёт до конца команды, сбрасывается
+// через ResetStoryLevelCache() в начале каждой Bulk-операции
+// (этажи могут измениться между вызовами).
+namespace {
+    std::map<short, double> g_storyLevelZ;
+    bool g_storyCacheLoaded = false;
+}
+
+void ResetStoryLevelCache ()
+{
+    g_storyLevelZ.clear ();
+    g_storyCacheLoaded = false;
+}
+
+double GetStoryLevelZ (short floorInd)
+{
+    if (!g_storyCacheLoaded) {
+        API_StoryInfo si = {};
+        if (ACAPI_Environment (APIEnv_GetStorySettingsID, &si, nullptr) == NoError
+            && si.data != nullptr) {
+            for (short i = si.firstStory; i <= si.lastStory; ++i) {
+                const API_StoryType* st = si.data[i - si.firstStory];
+                if (st != nullptr) g_storyLevelZ[st->index] = st->level;
+            }
+            BMKillHandle (reinterpret_cast<GSHandle*> (&si.data));
+        }
+        g_storyCacheLoaded = true;
+    }
+    auto it = g_storyLevelZ.find (floorInd);
+    if (it != g_storyLevelZ.end ()) return it->second;
+    // Fallback — старое поведение (индекс этажа, не Z).
+    return static_cast<double> (floorInd);
+}
+
 // Контуры (PolyLine/Hatch) читаются через существующий helper
 // GetPolygonsFromMemoCoords из CommandBase.hpp — без дублирования разбора.
 void Collect2DGeometryToJson (const API_Element& element, nlohmann::ordered_json& out)
