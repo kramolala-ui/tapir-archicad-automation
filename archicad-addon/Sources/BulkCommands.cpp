@@ -2520,8 +2520,6 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
         // Без композита фреймы витража выходят с перепутанными осями
         // (local Z -> world X, local X -> world Y), а окна/двери целиком
         // лежат плашмя в системе стены.
-        API_Tranmat elementParentTran = {};
-        const API_Tranmat* elementParentPtr = nullptr;
         if (hierarchical || openingHosted) {
             API_Element topElem = {};
             topElem.header = elemHead;
