@@ -173,6 +173,69 @@ public:
 // ---------------------------------------------------------------------
 // Bulk-create family
 //
+// BulkCreateElementsCommandBase wraps any Create*Command that derives
+// from CreateElementsCommandBase (ElementCreationCommands.hpp and
+// ExtendedElementCommands.hpp) through its public CreateMany: one undo
+// for the whole batch, per-item errors, exactly the same element
+// construction path as the JSON channel. The delegate is a
+// std::shared_ptr<CreateElementsCommandBase> so this header only needs
+// a forward-declare of the base; the concrete Create*Command types are
+// only named in BulkCommands.cpp where both headers are pulled in.
+//
+// Wire format (msgpack inside payload_b64), identical to the JSON
+// channel but binary-transported:
+//   input:  { "<arrayFieldName>": [ {item}, {item}, ... ] }
+//   output: { "per_source":    [ {index, ok, guid|error} ],
+//             "created_guids": ["guid", ...],
+//             "created_count": N,
+//             "errors_count":  M }
+// "<arrayFieldName>" is read from delegate->GetArrayFieldName() at
+// Execute time, so the same payload key the JSON command expects
+// works here ("polylinesData" for CreatePolylines, "wallsData" for
+// CreateWalls, ...).
+//
+// Top-level response carries payload_b64, compression, created_count,
+// errors_count - matching the other Bulk* commands so clients can read
+// counters without unpacking msgpack.
+//
+class BulkCreateElementsCommandBase : public CommandBase
+{
+public:
+    BulkCreateElementsCommandBase (const GS::String& name,
+                                   std::shared_ptr<CreateElementsCommandBase> delegate);
+
+    virtual GS::String GetName () const override;
+    virtual GS::Optional<GS::UniString> GetInputParametersSchema () const override;
+    virtual GS::Optional<GS::UniString> GetRawResponseSchema () const override;
+    virtual GS::ObjectState Execute (const GS::ObjectState& parameters, GS::ProcessControl& processControl) const override;
+
+protected:
+    GS::String                                 commandName;
+    std::shared_ptr<CreateElementsCommandBase> delegate;
+};
+
+class BulkCreatePolylinesCommand    : public BulkCreateElementsCommandBase { public: BulkCreatePolylinesCommand (); };
+class BulkCreateLineElementsCommand : public BulkCreateElementsCommandBase { public: BulkCreateLineElementsCommand (); };
+class BulkCreateArcsCommand         : public BulkCreateElementsCommandBase { public: BulkCreateArcsCommand (); };
+class BulkCreateCirclesCommand      : public BulkCreateElementsCommandBase { public: BulkCreateCirclesCommand (); };
+class BulkCreateSplinesCommand      : public BulkCreateElementsCommandBase { public: BulkCreateSplinesCommand (); };
+class BulkCreateHotspotsCommand     : public BulkCreateElementsCommandBase { public: BulkCreateHotspotsCommand (); };
+class BulkCreateHatchesCommand      : public BulkCreateElementsCommandBase { public: BulkCreateHatchesCommand (); };
+class BulkCreateTextsCommand        : public BulkCreateElementsCommandBase { public: BulkCreateTextsCommand (); };
+class BulkCreateLabelsCommand       : public BulkCreateElementsCommandBase { public: BulkCreateLabelsCommand (); };
+class BulkCreateColumnsCommand      : public BulkCreateElementsCommandBase { public: BulkCreateColumnsCommand (); };
+class BulkCreateSlabsCommand        : public BulkCreateElementsCommandBase { public: BulkCreateSlabsCommand (); };
+class BulkCreateZonesCommand        : public BulkCreateElementsCommandBase { public: BulkCreateZonesCommand (); };
+class BulkCreateObjectsCommand      : public BulkCreateElementsCommandBase { public: BulkCreateObjectsCommand (); };
+class BulkCreateLampsCommand        : public BulkCreateElementsCommandBase { public: BulkCreateLampsCommand (); };
+class BulkCreateMeshesCommand       : public BulkCreateElementsCommandBase { public: BulkCreateMeshesCommand (); };
+class BulkCreateWallsCommand        : public BulkCreateElementsCommandBase { public: BulkCreateWallsCommand (); };
+class BulkCreateBeamsCommand        : public BulkCreateElementsCommandBase { public: BulkCreateBeamsCommand (); };
+class BulkCreateStairsCommand       : public BulkCreateElementsCommandBase { public: BulkCreateStairsCommand (); };
+
+// ---------------------------------------------------------------------
+// Bulk-create family
+//
 // Each BulkCreate*Command wraps the matching Create*Command through
 // CreateElementsCommandBase::CreateMany (one undo for the whole batch,
 // per-item errors). The delegate is a std::shared_ptr so that the bulk
