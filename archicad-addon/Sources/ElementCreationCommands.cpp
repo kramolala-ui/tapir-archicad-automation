@@ -145,7 +145,7 @@ GS::ObjectState	CreateElementsCommandBase::CreateMany (const GS::Array<GS::Objec
             notification.elemHead = element.header;
             AddElementNotificationClientCommand::ElementEventHandlerProc (&notification);
 
-            elements (CreateElementIdObjectState (element.header.guid));
+            results.Push (CreateElementIdObjectState (element.header.guid));
         }
 
         // Leave the tool defaults as they were found: applying a favorite is a global
