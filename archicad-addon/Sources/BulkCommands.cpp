@@ -1339,6 +1339,11 @@ nlohmann::ordered_json CollectElementData (const ElementDataOptions& opts)
             params["object_angle"]  = element.object.angle;
             params["object_x_ratio"] = element.object.xRatio;
             params["object_y_ratio"] = element.object.yRatio;
+            // Зеркалирование. При Mirror Archicad поворачивает объект
+            // (обычно на 180°), но клиент не может восстановить отражение
+            // только по angle — нужно отдельное поле. Без него отзеркаленный
+            // объект рисуется «повёрнутым, но не отражённым».
+            params["object_reflected"] = element.object.reflected;
 #if TAPIR_AC26_ONLY
             API_LibPart lp = {};
             lp.index = element.object.libInd;
