@@ -2742,10 +2742,12 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
                          bool /*applyTransform*/,
                          std::vector<float>& outVertices,
                          std::vector<uint32_t>& outTriangles,
-                         std::string& errOut)
+                         std::string& errOut,
+                         std::vector<uint32_t>* outEdges = nullptr)
 {
     outVertices.clear ();
     outTriangles.clear ();
+    if (outEdges != nullptr) outEdges->clear ();
     // На AC27+ alias'ы ACAPI_ModelAccess_Get3DInfo / GetComponent
     // в MigrationHelper.hpp отсутствуют. Возвращаем graceful stub.
     (void) elemHead;
