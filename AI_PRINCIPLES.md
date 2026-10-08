@@ -2182,6 +2182,176 @@ symbol`. Дедуп сделан через большой replace с якоре
 
 ---
 
+## 10b. Сессия 2026-10-08 — зеркалирование, иерархические типы, edges, дырки в mesh
+
+### Mirror / object_reflected (Object / MEP)
+
+**Проблема:** при Mirror Archicad поворачивает Object (обычно на 180° в
+`element.object.angle`), но **само отражение** отдельным полем не
+пробрасывалось. Tapir `GetDetailsOfElements` уже отдаёт `reflected`,
+но `get_element_data` (C++ `CollectElementData` + инлайн `BulkGetElementData::Execute`)
+его игнорировал. Клиент строит transform только по `angle` → отзеркаленный
+объект рисуется «повёрнутым, но не отражённым».
+
+**Фикс C++ (`archicad-addon/Sources/BulkCommands.cpp`, 2 места):**
+
+- `CollectElementData` — после `object_x_ratio/y_ratio`:
+
+      params["object_reflected"] = element.object.reflected;
+
+- `BulkGetElementDataCommand::Execute` (инлайн-блок Object-специфичных
+  полей) — то же самое.
+
+После пересборки аддона в `parameters` появится `object_reflected: bool`.
+Клиент может строить корректную матрицу:
+
+    world = T(pos_x, pos_y, level) · Rz(angle) · S(xRatio·(−1 если reflected), yRatio, 1) · local_mesh
+
+### Expand иерархических типов в ExtractElementMesh
+
+**Проблема:** Column / Beam / CurtainWall / Stair / Railing не имеют
+собственного 3D-тела в топ-хедере. `ACAPI_ModelAccess_Get3DInfo`
+возвращает пустой range (`vc=0, tc=0`), вся геометрия — в **субэлементах**
+(`memo.columnSegments`, `memo.cWallFrames`, `memo.stairTreads` и т.д.).
+
+**Пример (live, AC26):**
+
+    Column A01B5355-...: top    vc=0  tc=0  err='empty mesh'
+                          segment vc=32 tc=36 err=None
+
+`bbox` у субэлементов не работает (даёт −1e38), но нам он не нужен —
+читаем просто по `.head`.
+
+**Фикс C++ (`ExtractElementMesh`, перед `Get3DInfo`):**
+
+1. Тип элемента — `GetElemTypeId(elemHead)` в наборе
+   `{Column, Beam, CurtainWall, Stair, Railing}`.
+2. `ACAPI_Element_GetMemo(guid, &memo, APIMemoMask_All)`.
+3. Рекурсивный обход memo-полей через шаблонную лямбду
+   `appendSub(auto* subelemArray)`:
+
+       Column:      memo.columnSegments
+       Beam:        memo.beamSegments
+       CurtainWall: memo.cWallSegments + cWallFrames + cWallPanels
+                    + cWallJunctions + cWallAccessories
+       Stair:       memo.stairRisers + stairTreads + stairStructures
+       Railing:     memo.railingNodes + railingSegments + railingPosts
+                    + railingRailEnds + railingRailConnections
+                    + railingHandrailEnds + railingHandrailConnections
+                    + railingToprailEnds + railingToprailConnections
+                    + railingRails + railingToprails + railingHandrails
+                    + railingPatterns + railingInnerPosts + railingPanels
+                    + railingBalusterSets + railingBalusters
+
+4. Каждый субэлемент — рекурсивный `ExtractElementMesh(subelem[i].head, ...)`,
+   склейка через offset по `base = outVertices.size() / 3`.
+5. Если хоть что-то собрано — `return true`, дальше (в `Get3DInfo` на
+   топ-хедер) не идём.
+6. Wall / Slab / Roof / Object / Morph / Zone / Mesh — не трогаются, у них
+   есть своё solid-тело.
+
+Регистр полей memo — точный, взят из рабочей
+`GetSubelementsOfHierarchicalElementsCommand` (ElementCommands.cpp).
+
+### Edges (standalone рёбра) — «усики» GDL-объектов
+
+**Проблема:** GDL-объекты (символьные линии, оси, размерные линии)
+содержат `body.nEdge` — standalone рёбра без полигонов. Раньше они не
+читались, актёр рисовался без «усиков».
+
+**Фикс C++ (`ExtractElementMesh`):**
+
+- Чтение `body.nEdge` → массив `edges` (`uint32`, пары индексов вершин).
+- В row добавляются поля `edgeCount` и `edges` (binary).
+- Если `outEdges != nullptr` — заполняем; иначе пропускаем (обратная
+  совместимость с вызовами без 6-го аргумента).
+
+**Фикс Python (`tools/_archicad_realtime_helpers.py`):**
+
+- `mesh_from_row`: чтение `row['edges']` → VTK-формат `[2, i, j, 2, ...]` →
+  `mesh.lines = lines_arr`. Один PolyData несёт `faces` (triangles) + `lines`
+  (standalone edges). Edge-only объекты — PolyData без faces, с lines.
+- `mesh_hash`: включает edges (`md5(vertices + triangles + edges)`). Изменение
+  только в standalone edges (подвинули ось/размерную линию) → актёр
+  перерисуется.
+- **Убран `auto_orient_normals=True`.** Эта операция для согласования
+  нормалей стремится сделать mesh «закрытым» и **визуально заделывает
+  реальные отверстия** в геометрии (стены с проёмами, объекты с вырезами,
+  торцы воздуховодов). Оставлен простой `compute_normals(inplace=True)`.
+
+**Диагностика (live, AC26):**
+
+    Object 4F8F1842 (Отвод Воздуховода 20):
+      vc=52, tc=72, edges=24 border
+      border components (openings) = 6 (4 вершины каждое)
+      CAPS (all 3 verts in same opening) = 0
+      duplicate triangle coord-sets = 0
+
+`CAPS = 0` подтвердил: **C++ не заделывает дырки**. Заделка была в
+Python-рендере (`auto_orient_normals`), устранена в этом же патче.
+
+### C5046 / C2572 — сигнатура ExtractElementMesh
+
+**C5046** (`Symbol involving type with internal linkage not defined`, /WX →
+C2220): forward-decl объявлял 5 аргументов (`errOut;`), а определение — 6
+(`errOut, outEdges = nullptr`). MSVC трактовал как **разные перегрузки**;
+5-арг версия без тела → C5046, `/WX` валит сборку.
+
+**C2572** (`redefinition of default argument`): после первого фикса на
+forward-decl появился `= nullptr`, но в **AC27+ определении** (стр. 2881)
+тоже остался свой `= nullptr` → конфликт.
+
+**Фикс (BulkCommands.cpp):**
+
+- Forward-decl (`~1289`) — 6 аргументов, `outEdges = nullptr` —
+  **единственный** default в TU.
+- AC25/26 определение (`~2358`) — 6 аргументов, **без** default.
+- AC27+ определение (`~2876`) — 6 аргументов, **без** default.
+- Существующие вызовы с 5 арг получают 6-й по умолчанию из forward-decl.
+
+**Компиляция:** зелёная на AC25/26/27+ (проверено в CI GitHub Actions
+после обоих фиксов).
+
+### Известные особенности AC26 (не чиним в этой сессии)
+
+- **Arc с `begAngle==endAngle==0` при `radius>0`** — это полная окружность
+  (Circle). Archicad не имеет отдельного типа `Circle`. `ElementTypeName`
+  уже имеет `API_CircleID` в switch, но AC26 фактически отдаёт круги как
+  `API_ArcID` с нулевыми углами. Отдельно чинить не надо — можно
+  восстанавливать тип по углам.
+
+- **Window / Door — `body.tranmat` даёт перепутанные оси.** Мировая
+  ориентация окон неверна: локальные x/y/z ↔ мировые меняются местами.
+  `bbox` окна верный (`x=толщина, y=ширина, z=высота`), а mesh после
+  `apply_transform=True` поворачивает оси (локальная X → мировая Z и т.д.).
+  Правильный путь — строить ориентацию из `element.window.pos/angle` +
+  системы стены-хозяина. Отложено; для рендера пока используем `bbox`.
+
+- **`Get3DInfo failed` на 2D-элементах** (Arc / Line / Circle / PolyLine /
+  Hatch / Text / Label / Hotspot). Ожидаемо — у 2D нет тела. Клиент
+  фильтрует по `element_type`. Early-return `vc=0, tc=0, err=None` — в
+  backlog, не критично.
+
+- **Библиотечный элемент «Оконный Проем Прямоугольный 26»** — это проём,
+  не окно. Archicad IFC-экспортёр может выдавать `IfcOpeningElement` без
+  парного `IfcWindow`. Это **данные проекта**, не код аддона. Проверять
+  при отладке IFC-экспорта (см. опции IFC: Openings/Windows mapping).
+
+### Backlog (в эту сессию не входит)
+
+- `_decode_mesh_rows` в `plugins/archicad_plugin/bulk_connection.py` — не
+  тронут. Если нужно, чтобы `bc.get_element_mesh()` возвращал `edges` —
+  отдельная правка (тесты ходят через `bc._call('BulkGetElementMesh', ...)`
+  напрямую и берут сырые rows — им edges уже доступны).
+- Правильная мировая ориентация Window / Door (см. выше).
+- Early-return в `ExtractElementMesh` для 2D-типов (vc=0/tc=0 без ошибки).
+- Roundtrip 2D-аннотаций обратно в Archicad через `BulkCreateElements`
+  (Text / Label / Dimension) — если понадобится.
+- AC27+ mesh — graceful stub (не поддерживается, `ACAPI_ModelAccess_*`
+  aliases не эмитируются MigrationHelper.hpp).
+
+---
+
 ## 11. Контакты и ссылки
 
 - **Форк:** https://github.com/kramolala-ui/tapir-archicad-automation (ветка `fresh`)
