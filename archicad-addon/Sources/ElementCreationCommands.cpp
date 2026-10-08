@@ -136,7 +136,7 @@ GS::ObjectState	CreateElementsCommandBase::CreateMany (const GS::Array<GS::Objec
 
             err = ACAPI_Element_Create (&element, &memo);
             if (err != NoError) {
-                elements (CreateErrorResponse (err, "Failed to create new " + elemTypeName));
+                results.Push (CreateErrorResponse (err, "Failed to create new " + elemTypeName));
                 continue;
             }
 
