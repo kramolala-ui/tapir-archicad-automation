@@ -2428,7 +2428,8 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
             pc.header.typeID = API_PgonID;
             pc.header.index  = iPgon;
             if (ACAPI_ModelAccess_GetComponent (&pc) != NoError) continue;
-            if (pc.pgon.status & APIPgon_Invis) continue;
+            ++diagTotalPgons;
+            if (pc.pgon.status & APIPgon_Invis) { ++diagInvisPgons; continue; }
 
             // Контур: рёбра fpedg..lpedg. Каждая pedg ссылается на edge
             // (знаковый index: <0 = обратное направление). pedg == 0 —
