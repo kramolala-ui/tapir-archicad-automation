@@ -2425,6 +2425,31 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
             tid == API_RailingID;
 
         if (hierarchical) {
+            // Родительский transform для субэлементов. У CurtainWall и
+            // Stair он лежит прямо в структуре (planeMatrix / basePlane);
+            // для остальных пока null — субэлементы идут как есть.
+            //
+            // Зачем: body.tranmat субэлемента CurtainWall'а НЕ учитывает
+            // поворот родителя (angle / flipped). Из-за этого фреймы и
+            // панели витража выходят с перепутанными осями — local Z
+            // уходит в мировой X, local X — в мировой Y. Композит с
+            // planeMatrix выправляет ориентацию.
+            API_Tranmat parentForSub = {};
+            const API_Tranmat* parentForSubPtr = nullptr;
+            {
+                API_Element topElem = {};
+                topElem.header = elemHead;
+                if (ACAPI_Element_Get (&topElem) == NoError) {
+                    if (tid == API_CurtainWallID) {
+                        parentForSub = topElem.curtainWall.planeMatrix;
+                        parentForSubPtr = &parentForSub;
+                    } else if (tid == API_StairID) {
+                        TranmatFromPlane3D (topElem.stair.basePlane, parentForSub);
+                        parentForSubPtr = &parentForSub;
+                    }
+                }
+            }
+
             auto appendSub = [&] (auto* subelemArray) -> bool {
                 if (subelemArray == nullptr) return false;
                 const GSSize n = BMGetPtrSize (reinterpret_cast<GSPtr> (subelemArray)) / sizeof (*subelemArray);
@@ -2436,7 +2461,8 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
                     std::string subErr;
                     const bool ok = ExtractElementMesh (subelemArray[i].head, applyTransform,
                                                         subV, subT, subErr,
-                                                        outEdges != nullptr ? &subE : nullptr);
+                                                        outEdges != nullptr ? &subE : nullptr,
+                                                        parentForSubPtr);
                     if (!ok || subV.empty ()) continue;
                     const uint32_t base = static_cast<uint32_t> (outVertices.size () / 3);
                     outVertices.insert (outVertices.end (), subV.begin (), subV.end ());
