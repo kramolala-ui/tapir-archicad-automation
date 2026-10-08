@@ -16,6 +16,21 @@ public:
     virtual GS::String GetName () const override;
     virtual GS::Optional<GS::UniString> GetRawResponseSchema () const override;
     virtual GS::ObjectState Execute (const GS::ObjectState& parameters, GS::ProcessControl& processControl) const override;
+
+    // Public per-item create loop: one ACAPI_CallUndoableCommand for the whole
+    // array, per-item results in the same shape Execute currently writes into
+    // "elements". Extracted so BulkCreateElementsCommandBase (BulkCommands.cpp)
+    // can reuse the exact same creation logic through the binary bulk channel.
+    GS::Array<GS::ObjectState> CreateMany (const GS::Array<GS::ObjectState>& dataArray) const;
+
+    // Input field name (e.g. "columnsData") - bulk wrappers read this out of
+    // the msgpack payload to locate the item array.
+    const GS::String& GetArrayFieldName () const { return arrayFieldName; }
+
+    // Command name ("CreateColumns" etc.) - used by bulk wrappers to tag the
+    // envelope response with the element type.
+    const GS::String& GetCreateCommandName () const { return commandName; }
+
 protected:
     virtual GS::Optional<GS::ObjectState> SetTypeSpecificParameters (API_Element& element, API_ElementMemo& memo, const Stories& stories, const GS::ObjectState& parameters) const = 0;
 protected:
