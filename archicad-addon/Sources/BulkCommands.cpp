@@ -5014,8 +5014,8 @@ GS::ObjectState BulkCreateElementsCommandBase::Execute (
     size_t createdCount = 0;
     size_t errorsCount  = 0;
 
-    const size_t n = static_cast<size_t> (perItem.GetSize ());
-    for (size_t i = 0; i < n; ++i) {
+    const USize n = perItem.GetSize ();
+    for (USize i = 0; i < n; ++i) {
         const GS::ObjectState& item = perItem[i];
         nlohmann::ordered_json srcOut;
         srcOut["index"] = static_cast<uint64_t> (i);
