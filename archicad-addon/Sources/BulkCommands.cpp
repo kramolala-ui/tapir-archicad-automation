@@ -1819,6 +1819,8 @@ GS::ObjectState BulkGetElementDataCommand::Execute (
         if (StringToElemTypeID (s, t)) connectedTypes.push_back (t);
     }
 
+    ResetStoryLevelCache ();
+
     nlohmann::ordered_json out;
     out["entities"]  = nlohmann::json::array ();
     out["relations"] = nlohmann::json::array ();
