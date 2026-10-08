@@ -1310,7 +1310,7 @@ void Collect2DGeometryToJson (const API_Element& element, nlohmann::ordered_json
             nlohmann::ordered_json p;
             p["x"] = element.hotspot.pos.x; p["y"] = element.hotspot.pos.y;
             g["position"] = p;
-            g["z_coordinate"] = static_cast<int> (element.header.floorInd);
+            g["z_coordinate"] = GetStoryLevelZ (element.header.floorInd);
         } break;
 
         default:
