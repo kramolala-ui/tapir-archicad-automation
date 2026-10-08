@@ -1281,7 +1281,7 @@ void Collect2DGeometryToJson (const API_Element& element, nlohmann::ordered_json
             g["angle"]    = element.text.angle;
             g["height"]   = element.text.size;
             g["pen"]      = static_cast<int> (element.text.pen);
-            g["z_coordinate"] = static_cast<int> (element.header.floorInd);
+            g["z_coordinate"] = GetStoryLevelZ (element.header.floorInd);
 
             API_ElementMemo memo = {};
             GS::UniString txt;
