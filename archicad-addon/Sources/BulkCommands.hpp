@@ -2,6 +2,10 @@
 
 #include "CommandBase.hpp"
 
+#include <memory>
+
+class CreateElementsCommandBase;
+
 // Bulk commands: бинарный транспорт (msgpack + zstd) поверх JSON-обёртки.
 //
 // Обоснование — AI_PRINCIPLES.md, разделы 4, 4d, 5, 9:
