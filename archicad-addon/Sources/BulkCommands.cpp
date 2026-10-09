@@ -1344,6 +1344,23 @@ void Collect2DSymbolToJson (const API_Elem_Head& elemHead, nlohmann::ordered_jso
     out["metadata"]["aspects_loaded"].push_back ("plan_view");
 }
 
+#else  // ServerMainVers_2700+
+
+// Stub для AC27+: ShapePrims и __ACENV_CALL недоступны в этом DevKit.
+// Клиент получает plan_view с пустым primitives и понятной ошибкой.
+void Collect2DSymbolToJson (const API_Elem_Head& /*elemHead*/, nlohmann::ordered_json& out)
+{
+    nlohmann::ordered_json plan;
+    plan["is_local"]          = true;
+    plan["primitives"]        = nlohmann::json::array ();
+    plan["primitives_count"]  = 0;
+    plan["shape_prims_error"] = "ShapePrims not available on this AC version (only AC25/AC26)";
+    out["plan_view"] = plan;
+    out["metadata"]["aspects_loaded"].push_back ("plan_view");
+}
+
+#endif  // ServerMainVers_2700
+
 // Контуры (PolyLine/Hatch) читаются через существующий helper
 // GetPolygonsFromMemoCoords из CommandBase.hpp — без дублирования разбора.
 void Collect2DGeometryToJson (const API_Element& element, nlohmann::ordered_json& out)
