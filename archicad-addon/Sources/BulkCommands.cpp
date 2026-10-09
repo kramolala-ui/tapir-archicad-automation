@@ -3350,6 +3350,168 @@ std::vector<uint8_t> UIntsToBytes (const std::vector<uint32_t>& v)
 
 }  // namespace
 
+// ---------------------------------------------------------------------
+//  BulkGetElementPlanViewCommand
+// ---------------------------------------------------------------------
+//  Отдельная bulk-команда: только 2D-символ (plan view) для списка элементов.
+//  Внутри — ACAPI_Element_ShapePrims + Collect2DSymbolToJson (см. выше).
+//  Контракт:
+//    payload (msgpack): { "elements": [ "guid", ... ] }
+//    response (msgpack): { "rows": [
+//      { "elementId": "...", "element_type": "Object",
+//        "plan_view": { "is_local": true, "primitives": [...],
+//                       "primitives_count": N, "shape_prims_error": null },
+//        "error": null }, ... ] }
+//  Для 2D-типов (Line/PolyLine/Arc/Circle/Spline/Hatch/Label/Text/Hotspot):
+//    plan_view = null, error = "not a 3D element (...)".
+//  Для 3D-типов без 2D-скрипта (пустой ShapePrims): primitives=[], error=null.
+
+BulkGetElementPlanViewCommand::BulkGetElementPlanViewCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkGetElementPlanViewCommand::GetName () const
+{
+    return "BulkGetElementPlanView";
+}
+
+GS::Optional<GS::UniString> BulkGetElementPlanViewCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkGetElementPlanViewCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64":          { "type": "string" },
+            "compression":          { "type": "string" },
+            "elements_count":       { "type": "integer" },
+            "with_plan_view_count": { "type": "integer" },
+            "total_primitives":     { "type": "integer" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkGetElementPlanViewCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    std::vector<std::string> elemGuids;
+    try {
+        nlohmann::json j = nlohmann::json::from_msgpack (raw);
+        if (!j.contains ("elements")) {
+            return CreateErrorResponse (APIERR_BADPARS,
+                "payload must contain 'elements'");
+        }
+        for (const auto& s : j["elements"]) elemGuids.push_back (s.get<std::string> ());
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+
+    nlohmann::ordered_json out;
+    out["rows"] = nlohmann::json::array ();
+    size_t withPlanViewCount = 0;
+    size_t totalPrimitives   = 0;
+
+    for (const std::string& guidStr : elemGuids) {
+        nlohmann::ordered_json row;
+        API_Guid guid = APIGuidFromString (guidStr.c_str ());
+        row["elementId"] = (guid == APINULLGuid)
+            ? guidStr
+            : APIGuidToString (guid).ToCStr ().Get ();
+
+        if (guid == APINULLGuid) {
+            row["element_type"] = "Unknown";
+            row["plan_view"]    = nullptr;
+            row["error"]        = "invalid guid";
+            out["rows"].push_back (row);
+            continue;
+        }
+
+        API_Element element = {};
+        element.header.guid = guid;
+        if (ACAPI_Element_Get (&element) != NoError) {
+            row["element_type"] = "Unknown";
+            row["plan_view"]    = nullptr;
+            row["error"]        = "element not found";
+            out["rows"].push_back (row);
+            continue;
+        }
+
+        const API_ElemTypeID tid = GetElemTypeId (element.header);
+        row["element_type"] = ElementTypeName (tid);
+
+        // 2D-типы: собственный entity["geometry"] есть в BulkGetElementData;
+        // plan_view не имеет смысла (это уже 2D).
+        const bool is2D = (tid == API_LineID || tid == API_PolyLineID ||
+                           tid == API_ArcID  || tid == API_CircleID ||
+                           tid == API_SplineID || tid == API_HatchID ||
+                           tid == API_LabelID || tid == API_TextID ||
+                           tid == API_HotspotID);
+
+        if (is2D) {
+            row["plan_view"] = nullptr;
+            row["error"]     = "not a 3D element";
+            out["rows"].push_back (row);
+            continue;
+        }
+
+        // 3D-тип — собираем plan_view через ShapePrims.
+        nlohmann::ordered_json wrapper;
+        wrapper["metadata"]["aspects_loaded"] = nlohmann::json::array ();
+        Collect2DSymbolToJson (element.header, wrapper);
+
+        row["plan_view"] = wrapper["plan_view"];
+        row["error"]     = nullptr;
+        ++withPlanViewCount;
+        if (wrapper["plan_view"].contains ("primitives_count")) {
+            totalPrimitives += wrapper["plan_view"]["primitives_count"].get<size_t> ();
+        }
+        out["rows"].push_back (row);
+    }
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 =
+        EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64",          GS::UniString (outB64.c_str ()));
+    response.Add ("compression",          GS::UniString (outCompression.c_str ()));
+    response.Add ("elements_count",       static_cast<Int64> (elemGuids.size ()));
+    response.Add ("with_plan_view_count", static_cast<Int64> (withPlanViewCount));
+    response.Add ("total_primitives",     static_cast<Int64> (totalPrimitives));
+    return response;
+}
+
 BulkGetElementMeshCommand::BulkGetElementMeshCommand () :
     CommandBase (CommonSchema::Used)
 {
