@@ -2555,6 +2555,142 @@ north angle/geo offsets вычислительные координаты уже
 
 ---
 
+## 10c. Сессия 2026-10-08 (обновление) — tranmat openings, Object/Lamp, has_3d, BulkCreate
+
+### Композит родительского transform — расширение на opening-типы
+
+Первый патч композита (см. §10b) закрывал CurtainWall (`planeMatrix`)
+и Stair (`basePlane`). Вторым патчем добавлены:
+
+- **Window / Door / Skylight / Opening** — композит с `body.tranmat`
+  стены-хозяина. Owner GUID берётся из `element.window.owner` (у
+  Window/Door/Skylight/Opening единый тип `API_WindowType`),
+  world transform owner-элемента — из его первого `body.tranmat`
+  (`GetOwnerWorldTranmat` helper).
+
+Причина: `body.tranmat` окна/двери задан в **локальной системе
+стены** (opening всегда позиционируется внутри wall), а не в мировой.
+Без композита окно на 1.8 м шириной выходило с перепутанными осями
+(X↔Z, Y↔X) и лежало плашмя в системе стены.
+
+Live: 1320 Window + 2194 Door + 2328 Opening — все 100% MISMATCH до
+патча. После пересборки — нужно проверить заново.
+
+### Object / Lamp — manual transform из element.object.*
+
+`body.tranmat` у свободных Object/Lamp даёт **неверную rotation**
+(лишние ~180° — маркер сетки длиной 70 м уезжает в противоположную
+сторону), но **корректный translation** (включая уровень этажа).
+
+Решение (в `ExtractElementMesh`):
+
+```cpp
+if (applyTransform && (tid == API_ObjectID || tid == API_LampID)) {
+    API_Element objElem = {};
+    objElem.header.guid = elemHead.guid;
+    if (ACAPI_Element_Get (&objElem) == NoError) {
+        const double a  = objElem.object.angle;
+        const double ca = std::cos (a), sa = std::sin (a);
+        API_Tranmat m = {};
+        m.tmx[0]= ca; m.tmx[1]=-sa; m.tmx[2]=0; m.tmx[3]=bodyTran.tmx[3];
+        m.tmx[4]= sa; m.tmx[5]= ca; m.tmx[6]=0; m.tmx[7]=bodyTran.tmx[7];
+        m.tmx[8]=  0; m.tmx[9]=  0; m.tmx[10]=1; m.tmx[11]=bodyTran.tmx[11];
+        bodyTran = m;
+    }
+}
+```
+
+**Что НЕ применять:** `xRatio`, `yRatio`, `reflected` — они уже
+встроены в local mesh (проверено на панельных радиаторах: local
+вершины приходят в единицах модели, ratio применять повторно нельзя,
+получим ×3 размеры).
+
+### `has_3d` — флаг в row BulkGetElementMesh
+
+Добавлен в `BulkGetElementMesh::Execute`: `row["has_3d"] = (vertexCount
+> 0) || (edgeCount > 0)`. Клиент не парсит err-строку `empty mesh
+(...)` — просто проверяет булево. `false` = 2D-символ без 3D-скрипта
+(кабели, щиты MEP), edge-only GDL (символьные линии) = `true`.
+
+### `z_coordinate` в 2D-геометрии — story level в метрах
+
+Было: `g["z_coordinate"] = static_cast<int> (element.header.floorInd)` —
+индекс этажа (например, `-2`). Tapir `GetDetailsOfElements` отдаёт
+`zCoordinate` в **метрах** (для этажа -2 → -6).
+
+Патч: helper `GetStoryLevelZ(floorInd)` через `ACAPI_Environment
+(APIEnv_GetStorySettingsID, ...)`, кэш `floorInd → level`. На AC27+
+`ACAPI_Environment` переименован — обёрнут в `#if !defined
+(ServerMainVers_2700)`, fallback = старое поведение (floorInd).
+
+Применено во всех 7 ветках `Collect2DGeometryToJson`: PolyLine,
+Hatch, Line, Arc/Circle, Label, Text, Hotspot.
+
+### BulkCreate* family — массовое создание элементов
+
+В репо есть отдельные команды для каждого типа элемента (обёртки
+над JSON-командами `CreateElementsCommandBase` через binary bulk
+транспорт):
+
+    BulkCreatePolylinesCommand       BulkCreateTextsCommand        BulkCreateMeshesCommand
+    BulkCreateLineElementsCommand    BulkCreateLabelsCommand       BulkCreateWallsCommand
+    BulkCreateArcsCommand            BulkCreateColumnsCommand      BulkCreateBeamsCommand
+    BulkCreateCirclesCommand         BulkCreateSlabsCommand        BulkCreateStairsCommand
+    BulkCreateSplinesCommand         BulkCreateZonesCommand
+    BulkCreateHotspotsCommand        BulkCreateObjectsCommand
+    BulkCreateHatchesCommand         BulkCreateLampsCommand
+
+Payload: `{ "<arrayFieldName>": [...] }`, где arrayFieldName — из
+`GetArrayFieldName()` делегата (`objectsData` для Objects, `wallsData`
+для Walls, и т.д.). Формат элементов совпадает с JSON-командами
+upstream Tapir.
+
+Проверено вживую: минимальный payload `{objectsData: [{}]}` создаёт
+default-Object (`Паспорт Квартиры`), `{libraryPartName: "...",
+coordinates: {x,y,z}, rotationAngle, xRatio, yRatio, mirrored}` —
+ставит нужный libPart в нужную точку. **`xRatio`/`yRatio` пока
+игнорируются** — уточнить схему через upstream `CreateObjectsCommand`.
+
+### `object_reflected` в BulkCloneElement и BulkSetElementData
+
+Асимметрия: чтение `object_reflected` уже работало, а **записать**
+флаг было нельзя (BulkSetElementData игнорировал ключ). Аналогично
+`BulkCloneElement` не мог создавать зеркальные копии из
+не-зеркального донора.
+
+Патчи:
+
+- **BulkCloneElement**: в `instance` добавлен `reflected: bool` —
+  выставляется в `el.object.reflected` перед `ACAPI_Element_Create`.
+- **BulkSetElementData**: ключи `object_reflected` / `reflected`
+  приняты — пишутся через `element.object.reflected` + маска.
+
+Проверено: донор с `reflected=true` при клонировании **унаследует**
+флаг (ACAPI_Element_Create копирует всю структуру `API_ObjectType`),
+но теперь можно явно задавать флаг и в instance, и в set.
+
+### C2065 / C3861 — грабли компиляции при патчах этой сессии
+
+- **C2065** (`elementParentPtr undeclared`): переменная объявлена
+  внутри блока `{ ... }`, использовалась в body-loop за пределами.
+  Фикс — вынести `elementParentTran` / `elementParentPtr` на уровень
+  функции.
+- **C3861** (`ACAPI_Environment identifier not found`): на AC27+
+  функция переименована. Обернуть в `#if !defined
+  (ServerMainVers_2700)`, fallback = старое поведение.
+
+### Грабли AC26 — резюме сессии
+
+- `body.tranmat` субэлементов CurtainWall / Opening-элементов
+  локальный, не мировой.
+- `body.tranmat` Morph — битый (world уезжает на +371 м по Y).
+- `z_coordinate` в Tapir — метры, не `floorInd`.
+- Круги отдаются как `API_ArcID` с `begAngle == endAngle == 0`.
+- `ACAPI_Environment` — только AC25/26, на 27+ другое имя.
+- `dry_run` в BulkSetElementData не считает property-изменения.
+
+---
+
 ## 11. Контакты и ссылки
 
 - **Форк:** https://github.com/kramolala-ui/tapir-archicad-automation (ветка `fresh`)
