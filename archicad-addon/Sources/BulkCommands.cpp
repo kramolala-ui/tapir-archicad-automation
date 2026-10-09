@@ -1730,6 +1730,22 @@ nlohmann::ordered_json CollectElementData (const ElementDataOptions& opts)
             }
         }
 
+        // ---- plan view (2D symbol via ShapePrims) ----
+        // Только для 3D-элементов (Object/Lamp/Window/Door/CurtainWall/...);
+        // для 2D-типов (Line/PolyLine/Hatch/...) plan_view не заполняем —
+        // у них есть собственный entity["geometry"] через Collect2DGeometryToJson.
+        if (opts.withPlanView) {
+            const API_ElemTypeID pvType = GetElemTypeId (element.header);
+            const bool is2D = (pvType == API_LineID || pvType == API_PolyLineID ||
+                               pvType == API_ArcID  || pvType == API_CircleID ||
+                               pvType == API_SplineID || pvType == API_HatchID ||
+                               pvType == API_LabelID || pvType == API_TextID ||
+                               pvType == API_HotspotID);
+            if (!is2D) {
+                Collect2DSymbolToJson (element.header, entity);
+            }
+        }
+
         // ---- properties ----
         if (!opts.propGuids.empty ()) {
             bool anyProp = false;
