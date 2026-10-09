@@ -3638,6 +3638,8 @@ nlohmann::ordered_json ContextToJson (const API_DatabaseInfo& dbi)
 
 }  // namespace
 
+#endif  // ServerMainVers_2700
+
 BulkGetContextCommand::BulkGetContextCommand () :
     CommandBase (CommonSchema::Used)
 {
