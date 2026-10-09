@@ -3470,6 +3470,39 @@ GS::ObjectState BulkGetElementPlanViewCommand::Execute (
     size_t withPlanViewCount = 0;
     size_t totalPrimitives   = 0;
 
+#if !defined(ServerMainVers_2700)
+    // ShapePrims собирает 2D-символ 3D-элемента в контексте ТЕКУЩЕЙ БД
+    // Archicad. Если пользователь сидит в 3D-виде (или разрезе, или
+    // где угодно кроме плана), ShapePrims возвращает пусто — 2D-скрипт
+    // элемента просто не запускается. Это и есть симптом «plan_view
+    // приходит, только если объект выделен на 2D-плане».
+    //
+    // Переключаем current database на FloorPlan на время сбора.
+    // ВАЖНО: это НЕ меняет видимое окно пользователя —
+    // APIDb_ChangeCurrentDatabaseID переключает только контекст API
+    // (см. MigrationHelper.hpp:89 и комментарий в ExtendedElementCommands
+    // ::SwitchCurrentDatabaseToFloorPlan). Пользователь продолжает
+    // видеть то же, что видел; после — возвращаем исходную БД.
+    //
+    // FloorPlan — одна БД на все этажи, отдельно переключать этаж не
+    // надо: element.header.floorInd уже несёт этаж элемента, а
+    // ShapePrims работает по element.header.
+    API_DatabaseInfo previousDatabase = {};
+    bool databaseSwitched = false;
+    {
+        const GSErrCode dbErr = ACAPI_Database_GetCurrentDatabase (&previousDatabase);
+        if (dbErr == NoError &&
+            previousDatabase.typeID != APIWind_FloorPlanID) {
+            API_DatabaseInfo floorPlanDatabase = {};
+            floorPlanDatabase.typeID = APIWind_FloorPlanID;
+            if (ACAPI_Window_GetDatabaseInfo (&floorPlanDatabase) == NoError &&
+                ACAPI_Database_ChangeCurrentDatabase (&floorPlanDatabase) == NoError) {
+                databaseSwitched = true;
+            }
+        }
+    }
+#endif
+
     for (const std::string& guidStr : elemGuids) {
         nlohmann::ordered_json row;
         API_Guid guid = APIGuidFromString (guidStr.c_str ());
