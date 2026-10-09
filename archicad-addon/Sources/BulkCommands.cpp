@@ -1159,6 +1159,12 @@ double GetStoryLevelZ (short floorInd)
 // Аккумуляция — через статическую переменную (bulk-команды Tapir одно-поточные).
 //
 // v1: Point / Line / Arc / Circle / PolyLine / Poly / Triangle. Text / Pict — TODO.
+//
+// AC27+ не имеет ни __ACENV_CALL, ни ACAPI_Element_ShapePrims в этом DevKit —
+// весь блок компилируется только для AC25/26. На 27+ ниже — stub
+// Collect2DSymbolToJson, возвращающий plan_view с понятной ошибкой.
+
+#if !defined(ServerMainVers_2700)
 
 namespace {
 
