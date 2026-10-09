@@ -3701,6 +3701,7 @@ GS::ObjectState BulkGetContextCommand::Execute (
         return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
     }
 
+#if !defined(ServerMainVers_2700)
     API_DatabaseInfo dbi = {};
     const GSErrCode e = ACAPI_Database (APIDb_GetCurrentDatabaseID, &dbi, nullptr, nullptr);
 
@@ -3712,6 +3713,11 @@ GS::ObjectState BulkGetContextCommand::Execute (
         out["context"] = nullptr;
         out["error"]   = "APIDb_GetCurrentDatabaseID failed: " + std::to_string (static_cast<long long> (e));
     }
+#else
+    nlohmann::ordered_json out;
+    out["context"] = nullptr;
+    out["error"]   = "GetContext not supported on this AC version (only AC25/AC26)";
+#endif
 
     std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
     std::string outCompression;
