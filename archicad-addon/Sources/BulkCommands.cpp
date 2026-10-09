@@ -1105,28 +1105,20 @@ void ResetStoryLevelCache ()
 
 double GetStoryLevelZ (short floorInd)
 {
-#if !defined (ServerMainVers_2700)
-    // На AC25/26 ACAPI_Environment и APIEnv_GetStorySettingsID доступны
-    // через ACAPinc.h. На AC27+ alias в MigrationHelper.hpp отсутствует —
-    // тот же случай, что и ACAPI_ModelAccess_Get3DInfo (см. §4f
-    // AI_PRINCIPLES про mesh-stub). Fallback — старое поведение
-    // (z_coordinate = floorInd).
-    if (!g_storyCacheLoaded) {
-        API_StoryInfo si = {};
-        if (ACAPI_Environment (APIEnv_GetStorySettingsID, &si, nullptr) == NoError
-            && si.data != nullptr) {
-            for (short i = si.firstStory; i <= si.lastStory; ++i) {
-                const API_StoryType* st = si.data[i - si.firstStory];
-                if (st != nullptr) g_storyLevelZ[st->index] = st->level;
-            }
-            BMKillHandle (reinterpret_cast<GSHandle*> (&si.data));
-        }
-        g_storyCacheLoaded = true;
-    }
-    auto it = g_storyLevelZ.find (floorInd);
-    if (it != g_storyLevelZ.end ()) return it->second;
-#endif
-    // Fallback (AC27+ или этаж не найден): старое поведение — индекс этажа.
+    // NOTE (2026-10-08): попытка читать уровень этажа через
+    // ACAPI_Environment(APIEnv_GetStorySettingsID, ...) КРАШИЛА Archicad
+    // AC26. Причина — неправильный dispose handle для si.data
+    // (массив указателей API_StoryType**): BMKillHandle на сам массив
+    // недостаточно / не тот. Возможно, требуется BMKillPtr на каждый
+    // элемент + отдельно массив, либо индексация si.data[] не 0-based
+    // от firstStory.
+    //
+    // TODO: найти правильный пример в DevKit Examples, протестировать
+    // на ПУСТОМ проекте (не рабочем). Возможно, использовать
+    // ACAPI_ProjectSetting_GetStorySettings — другой путь.
+    //
+    // Пока — fallback = floorInd (старое поведение до патча). Клиент
+    // может умножить на storyHeight сам.
     return static_cast<double> (floorInd);
 }
 
