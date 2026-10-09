@@ -1105,20 +1105,37 @@ void ResetStoryLevelCache ()
 
 double GetStoryLevelZ (short floorInd)
 {
-    // NOTE (2026-10-08): попытка читать уровень этажа через
-    // ACAPI_Environment(APIEnv_GetStorySettingsID, ...) КРАШИЛА Archicad
-    // AC26. Причина — неправильный dispose handle для si.data
-    // (массив указателей API_StoryType**): BMKillHandle на сам массив
-    // недостаточно / не тот. Возможно, требуется BMKillPtr на каждый
-    // элемент + отдельно массив, либо индексация si.data[] не 0-based
-    // от firstStory.
+#if !defined (ServerMainVers_2700)
+    // На AC25/26 ACAPI_Environment и APIEnv_GetStorySettingsID доступны
+    // через ACAPinc.h. На AC27+ alias отсутствует (как ACAPI_ModelAccess_*),
+    // используется fallback = floorInd.
     //
-    // TODO: найти правильный пример в DevKit Examples, протестировать
-    // на ПУСТОМ проекте (не рабочем). Возможно, использовать
-    // ACAPI_ProjectSetting_GetStorySettings — другой путь.
-    //
-    // Пока — fallback = floorInd (старое поведение до патча). Клиент
-    // может умножить на storyHeight сам.
+    // ВАЖНО: si.data — это API_StoryType** (handle, двойной указатель).
+    // Обращение — (*si.data)[relIdx], НЕ si.data[relIdx]. Паттерн взят из
+    // DevKit: Examples/Environment_Control/Src/Environment_Control.c:1106-1107:
+    //     actHeight = (*storyInfo.data)[actFloor + 1].level
+    //               - (*storyInfo.data)[actFloor].level;
+    // Раньше (2026-10-08) был si.data[relIdx] — это давало API_StoryType*
+    // (указатель на элемент handle-массива), обращение к .index/.level
+    // читало случайную память → КРАШ Archicad AC26. Dispose — BMKillHandle
+    // на &si.data (тоже как в примере, было верно).
+    if (!g_storyCacheLoaded) {
+        API_StoryInfo si = {};
+        if (ACAPI_Environment (APIEnv_GetStorySettingsID, &si, nullptr) == NoError
+            && si.data != nullptr) {
+            for (short i = si.firstStory; i <= si.lastStory; ++i) {
+                const short relIdx = static_cast<short> (i - si.firstStory);
+                const API_StoryType& st = (*si.data)[relIdx];
+                g_storyLevelZ[st.index] = st.level;
+            }
+            BMKillHandle (reinterpret_cast<GSHandle*> (&si.data));
+        }
+        g_storyCacheLoaded = true;
+    }
+    auto it = g_storyLevelZ.find (floorInd);
+    if (it != g_storyLevelZ.end ()) return it->second;
+#endif
+    // Fallback (AC27+ или этаж не найден): старое поведение — индекс этажа.
     return static_cast<double> (floorInd);
 }
 
