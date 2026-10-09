@@ -3560,6 +3560,14 @@ GS::ObjectState BulkGetElementPlanViewCommand::Execute (
         out["rows"].push_back (row);
     }
 
+#if !defined(ServerMainVers_2700)
+    // Возвращаем исходную БД. Внутри цикла нет ранних return'ов —
+    // только continue — так что этот код гарантированно выполнится.
+    if (databaseSwitched) {
+        ACAPI_Database_ChangeCurrentDatabase (&previousDatabase);
+    }
+#endif
+
     std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
     std::string outCompression;
     const std::string outB64 =
