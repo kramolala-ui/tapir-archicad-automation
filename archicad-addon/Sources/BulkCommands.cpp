@@ -1968,6 +1968,7 @@ GS::ObjectState BulkGetElementDataCommand::Execute (
     bool withMesh = false;
     bool applyTransform = true;
     bool with2DGeometry = false;
+    bool withPlanView = false;    // 2D-символ (plan view) через ShapePrims
     bool readSelection = false;   // selected=true: читать текущее выделение
     bool withGroupInfo = true;    // добавлять group_guid в params
     bool withGroupMembers = false; // добавлять groups[...] в ответ
