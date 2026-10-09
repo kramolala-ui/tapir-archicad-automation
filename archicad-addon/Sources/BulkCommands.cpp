@@ -3512,6 +3512,295 @@ GS::ObjectState BulkGetElementPlanViewCommand::Execute (
     return response;
 }
 
+// ---------------------------------------------------------------------
+//  BulkGetContext / BulkSwitchContext
+// ---------------------------------------------------------------------
+//  Управление текущей базой данных Archicad (куда пойдут Element_Create).
+//  Через ACAPI_Database(APIDb_GetCurrentDatabaseID / APIDb_ChangeCurrentDatabaseID).
+//  ВАЖНО: эта команда НЕ переключает видимое окно пользователя — только
+//  API-контекст. Пользователь по-прежнему видит то, что видит; но новые
+//  элементы будут создаваться в целевой БД.
+//
+//  BulkGetContext  : читает текущую БД.
+//  BulkSwitchContext: переключает БД по GUID (database_un_id).
+//
+//  GUID целевой БД клиент получает так: пользователь в UI открывает
+//  нужное окно (3D, план 3-го этажа), скрипт вызывает BulkGetContext,
+//  запоминает database_un_id, потом переключается куда нужно. Вернуться
+//  можно, вызвав BulkSwitchContext с сохранённым GUID.
+//
+//  Пример (DevKit): Examples/Database_Control/Src/Database_Control.cpp:284-312.
+
+namespace {
+
+const char* WindowTypeToName (API_WindowTypeID t)
+{
+    switch (t) {
+        case APIWind_FloorPlanID:            return "FloorPlan";
+        case APIWind_SectionID:              return "Section";
+        case APIWind_DetailID:               return "Detail";
+        case APIWind_3DModelID:              return "3DModel";
+        case APIWind_LayoutID:               return "Layout";
+        case APIWind_DrawingID:              return "Drawing";
+        case APIWind_MasterLayoutID:         return "MasterLayout";
+        case APIWind_ElevationID:            return "Elevation";
+        case APIWind_InteriorElevationID:    return "InteriorElevation";
+        case APIWind_WorksheetID:            return "Worksheet";
+        case APIWind_ReportID:               return "Report";
+        case APIWind_DocumentFrom3DID:       return "DocumentFrom3D";
+        case APIWind_External3DID:           return "External3D";
+        case APIWind_Movie3DID:              return "Movie3D";
+        case APIWind_MovieRenderingID:       return "MovieRendering";
+        case APIWind_RenderingID:            return "Rendering";
+        case APIWind_ModelCompareID:         return "ModelCompare";
+        case APIWind_MyTextID:               return "MyText";
+        case APIWind_MyDrawID:               return "MyDraw";
+        case APIWind_IESCommonDrawingID:     return "IESCommonDrawing";
+        default:                             return "Unknown";
+    }
+}
+
+bool NameToWindowType (const std::string& s, API_WindowTypeID& out)
+{
+    static const std::map<std::string, API_WindowTypeID> tbl = {
+        {"FloorPlan",         APIWind_FloorPlanID},
+        {"Section",           APIWind_SectionID},
+        {"Detail",            APIWind_DetailID},
+        {"3DModel",           APIWind_3DModelID},
+        {"Layout",            APIWind_LayoutID},
+        {"Drawing",           APIWind_DrawingID},
+        {"MasterLayout",      APIWind_MasterLayoutID},
+        {"Elevation",         APIWind_ElevationID},
+        {"InteriorElevation", APIWind_InteriorElevationID},
+        {"Worksheet",         APIWind_WorksheetID},
+        {"Report",            APIWind_ReportID},
+        {"DocumentFrom3D",    APIWind_DocumentFrom3DID},
+        {"External3D",        APIWind_External3DID},
+        {"Movie3D",           APIWind_Movie3DID},
+        {"MovieRendering",    APIWind_MovieRenderingID},
+        {"Rendering",         APIWind_RenderingID},
+        {"ModelCompare",      APIWind_ModelCompareID},
+        {"MyText",            APIWind_MyTextID},
+        {"MyDraw",            APIWind_MyDrawID},
+    };
+    auto it = tbl.find (s);
+    if (it == tbl.end ()) return false;
+    out = it->second;
+    return true;
+}
+
+nlohmann::ordered_json ContextToJson (const API_DatabaseInfo& dbi)
+{
+    nlohmann::ordered_json o;
+    o["database_un_id"] = APIGuidToString (dbi.databaseUnId.elemSetId).ToCStr ().Get ();
+    o["type"]           = WindowTypeToName (dbi.typeID);
+    o["index"]          = static_cast<int64_t> (dbi.index);
+    o["title"]          = GS::UniString (dbi.title).ToCStr ().Get ();
+    o["name"]           = GS::UniString (dbi.name).ToCStr ().Get ();
+    o["ref"]            = GS::UniString (dbi.ref).ToCStr ().Get ();
+    if (dbi.linkedElement != APINULLGuid) {
+        o["linked_element"] = APIGuidToString (dbi.linkedElement).ToCStr ().Get ();
+    }
+    const std::string linkedGuid = APIGuidToString (dbi.linkedDatabaseUnId.elemSetId).ToCStr ().Get ();
+    if (!linkedGuid.empty () && dbi.linkedDatabaseUnId.elemSetId != APINULLGuid) {
+        o["linked_database_un_id"] = linkedGuid;
+    }
+    return o;
+}
+
+}  // namespace
+
+BulkGetContextCommand::BulkGetContextCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkGetContextCommand::GetName () const
+{
+    return "BulkGetContext";
+}
+
+GS::Optional<GS::UniString> BulkGetContextCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkGetContextCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkGetContextCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    // payload читаем, но не используем — нужен только факт запроса.
+    try { (void) nlohmann::json::from_msgpack (raw); }
+    catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+
+    API_DatabaseInfo dbi = {};
+    const GSErrCode e = ACAPI_Database (APIDb_GetCurrentDatabaseID, &dbi, nullptr, nullptr);
+
+    nlohmann::ordered_json out;
+    if (e == NoError) {
+        out["context"] = ContextToJson (dbi);
+        out["error"]   = nullptr;
+    } else {
+        out["context"] = nullptr;
+        out["error"]   = "APIDb_GetCurrentDatabaseID failed: " + std::to_string (static_cast<long long> (e));
+    }
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 =
+        EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64", GS::UniString (outB64.c_str ()));
+    response.Add ("compression", GS::UniString (outCompression.c_str ()));
+    return response;
+}
+
+BulkSwitchContextCommand::BulkSwitchContextCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkSwitchContextCommand::GetName () const
+{
+    return "BulkSwitchContext";
+}
+
+GS::Optional<GS::UniString> BulkSwitchContextCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkSwitchContextCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkSwitchContextCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    std::string targetGuidStr;
+    try {
+        nlohmann::json j = nlohmann::json::from_msgpack (raw);
+        if (!j.contains ("database_un_id")) {
+            return CreateErrorResponse (APIERR_BADPARS,
+                "payload must contain 'database_un_id' (GUID of target database)");
+        }
+        targetGuidStr = j["database_un_id"].get<std::string> ();
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+
+    const API_Guid targetGuid = APIGuidFromString (targetGuidStr.c_str ());
+    if (targetGuid == APINULLGuid) {
+        return CreateErrorResponse (APIERR_BADPARS, "database_un_id is invalid GUID");
+    }
+
+    // 1. Сохранить previous.
+    API_DatabaseInfo prevDB = {};
+    ACAPI_Database (APIDb_GetCurrentDatabaseID, &prevDB, nullptr, nullptr);
+
+    // 2. Переключиться.
+    API_DatabaseInfo target = {};
+    target.databaseUnId.elemSetId = targetGuid;
+    // typeID оставляем как APIDb_ChangeCurrentDatabaseID ожидает — по данным
+    // DevKit (Database_Control.cpp:145-148) достаточно typeID + databaseUnId.
+    // Мы не знаем typeID заранее; проверим — если Change упадёт, вернуть ошибку.
+    const GSErrCode eChg = ACAPI_Database (APIDb_ChangeCurrentDatabaseID, &target, nullptr, nullptr);
+
+    // 3. Прочитать current.
+    API_DatabaseInfo curDB = {};
+    ACAPI_Database (APIDb_GetCurrentDatabaseID, &curDB, nullptr, nullptr);
+
+    nlohmann::ordered_json out;
+    out["ok"]       = (eChg == NoError);
+    out["previous"] = ContextToJson (prevDB);
+    out["current"]  = ContextToJson (curDB);
+    out["error"]    = (eChg == NoError)
+        ? nlohmann::json (nullptr)
+        : nlohmann::json ("APIDb_ChangeCurrentDatabaseID failed: " + std::to_string (static_cast<long long> (eChg)));
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 =
+        EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64", GS::UniString (outB64.c_str ()));
+    response.Add ("compression", GS::UniString (outCompression.c_str ()));
+    return response;
+}
+
 BulkGetElementMeshCommand::BulkGetElementMeshCommand () :
     CommandBase (CommonSchema::Used)
 {
