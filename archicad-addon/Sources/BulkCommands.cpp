@@ -3802,6 +3802,8 @@ GS::ObjectState BulkSwitchContextCommand::Execute (
         return CreateErrorResponse (APIERR_BADPARS, "database_un_id is invalid GUID");
     }
 
+    nlohmann::ordered_json out;
+#if !defined(ServerMainVers_2700)
     // 1. Сохранить previous.
     API_DatabaseInfo prevDB = {};
     ACAPI_Database (APIDb_GetCurrentDatabaseID, &prevDB, nullptr, nullptr);
@@ -3818,13 +3820,19 @@ GS::ObjectState BulkSwitchContextCommand::Execute (
     API_DatabaseInfo curDB = {};
     ACAPI_Database (APIDb_GetCurrentDatabaseID, &curDB, nullptr, nullptr);
 
-    nlohmann::ordered_json out;
     out["ok"]       = (eChg == NoError);
     out["previous"] = ContextToJson (prevDB);
     out["current"]  = ContextToJson (curDB);
     out["error"]    = (eChg == NoError)
         ? nlohmann::json (nullptr)
         : nlohmann::json ("APIDb_ChangeCurrentDatabaseID failed: " + std::to_string (static_cast<long long> (eChg)));
+#else
+    (void) targetGuid;
+    out["ok"]       = false;
+    out["previous"] = nullptr;
+    out["current"]  = nullptr;
+    out["error"]    = "SwitchContext not supported on this AC version (only AC25/AC26)";
+#endif
 
     std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
     std::string outCompression;
