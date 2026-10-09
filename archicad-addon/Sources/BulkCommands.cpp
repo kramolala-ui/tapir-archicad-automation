@@ -1078,6 +1078,7 @@ struct ElementDataOptions {
     bool                         withMesh = false;
     bool                         applyTransform = true;
     bool                         with2DGeometry = false;
+    bool                         withPlanView = false;
     bool                         withGroupInfo = true;
     bool                         withGroupMembers = false;
 };
