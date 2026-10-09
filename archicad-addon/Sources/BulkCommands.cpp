@@ -1283,24 +1283,27 @@ GSErrCode __ACENV_CALL ShapePrimsToJsonCallback (const API_PrimElement* primElem
             o["n_coords"]     = p.nCoords;
             o["n_sub_polys"]  = p.nSubPolys;
             o["n_arcs"]       = p.nArcs;
+            // 1-based (см. комментарий к API_PrimPLineID выше).
             if (par1 != nullptr && p.nCoords > 0) {
                 const API_Coord* coords = static_cast<const API_Coord*> (par1);
-                for (Int32 k = 0; k < p.nCoords; ++k) {
+                for (Int32 k = 1; k <= p.nCoords; ++k) {
                     nlohmann::ordered_json c;
                     c["x"] = coords[k].x;
                     c["y"] = coords[k].y;
                     o["coordinates"].push_back (c);
                 }
             }
+            // pends — тоже 1-based; pends[k] = 1-based индекс последней
+            // вершины субполигона k. pends[0] = 0 placeholder.
             if (par2 != nullptr && p.nSubPolys > 0) {
                 const Int32* pends = static_cast<const Int32*> (par2);
-                for (Int32 k = 0; k < p.nSubPolys; ++k) {
+                for (Int32 k = 1; k <= p.nSubPolys; ++k) {
                     o["sub_poly_ends"].push_back (pends[k]);
                 }
             }
             if (par3 != nullptr && p.nArcs > 0) {
                 const API_PolyArc* arcs = static_cast<const API_PolyArc*> (par3);
-                for (Int32 k = 0; k < p.nArcs; ++k) {
+                for (Int32 k = 1; k <= p.nArcs; ++k) {
                     nlohmann::ordered_json a;
                     a["begIndex"] = arcs[k].begIndex;
                     a["endIndex"] = arcs[k].endIndex;
