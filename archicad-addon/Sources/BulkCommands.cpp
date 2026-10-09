@@ -1140,6 +1140,204 @@ double GetStoryLevelZ (short floorInd)
     return static_cast<double> (floorInd);
 }
 
+// =====================================================================
+//  2D-символ (plan view) 3D-элемента через ACAPI_Element_ShapePrims
+// =====================================================================
+// Возвращает 2D-вид, как элемент рисуется на плане Archicad — то, что
+// ShapePrims отдаёт через callback: Point / Line / Arc / PolyLine /
+// Poly / Tri (+ Text / Pict, но они в v1 пропускаются).
+//
+// Координаты примитивов — ЛОКАЛЬНЫЕ (в системе самого элемента);
+// клиент применяет transform (pos_x/y, angle, level, reflected,
+// xRatio, yRatio) сам. Флаг plan_view.is_local = true.
+//
+// Пример использования API в DevKit:
+//   Examples/Element_Test/Src/Element_Basics.cpp:5035 (Do_ExplodeElem),
+//   Examples/Element_Test/Src/Element_Snippets.cpp:2193.
+// Callback в DevKit — 4-аргументный, без userData:
+//     GSErrCode __ACENV_CALL f(const API_PrimElement*, const void*, const void*, const void*);
+// Аккумуляция — через статическую переменную (bulk-команды Tapir одно-поточные).
+//
+// v1: Point / Line / Arc / Circle / PolyLine / Poly / Triangle. Text / Pict — TODO.
+
+namespace {
+
+nlohmann::ordered_json* g_shapePrimsOutput = nullptr;
+int                    g_shapePrimsCount  = 0;
+
+GSErrCode __ACENV_CALL ShapePrimsToJsonCallback (const API_PrimElement* primElem,
+                                                 const void* par1,
+                                                 const void* par2,
+                                                 const void* par3)
+{
+    if (g_shapePrimsOutput == nullptr || primElem == nullptr) return NoError;
+    auto& arr = *g_shapePrimsOutput;
+
+    auto putXY = [] (nlohmann::ordered_json& o, const API_Coord& c) {
+        o["x"] = c.x;
+        o["y"] = c.y;
+    };
+
+    switch (primElem->header.typeID) {
+        case API_PrimPointID: {
+            nlohmann::ordered_json o;
+            o["type"] = "Point";
+            putXY (o, primElem->point.loc);
+            arr.push_back (o);
+            ++g_shapePrimsCount;
+        } break;
+
+        case API_PrimLineID: {
+            const API_PrimLine& l = primElem->line;
+            nlohmann::ordered_json o, b, e;
+            o["type"] = "Line";
+            putXY (b, l.c1);
+            putXY (e, l.c2);
+            o["beg"] = b;
+            o["end"] = e;
+            o["ltype"]      = APIGuidToString (GetAttributeGuidFromIndex (API_LinetypeID, l.ltypeInd)).ToCStr ().Get ();
+            o["pen_weight"] = l.penWeight;
+            arr.push_back (o);
+            ++g_shapePrimsCount;
+        } break;
+
+        case API_PrimArcID: {
+            const API_PrimArc& a = primElem->arc;
+            nlohmann::ordered_json o, org;
+            o["type"] = a.whole ? "Circle" : "Arc";
+            putXY (org, a.orig);
+            o["origin"]     = org;
+            o["radius"]     = a.r;
+            o["beg_angle"]  = a.begAng;
+            o["end_angle"]  = a.endAng;
+            o["angle"]      = a.angle;
+            o["ratio"]      = a.ratio;
+            o["reflected"]  = a.reflected;
+            o["ltype"]      = APIGuidToString (GetAttributeGuidFromIndex (API_LinetypeID, a.ltypeInd)).ToCStr ().Get ();
+            o["pen_weight"] = a.penWeight;
+            arr.push_back (o);
+            ++g_shapePrimsCount;
+        } break;
+
+        case API_PrimPLineID: {
+            const API_PrimPLine& pl = primElem->pline;
+            nlohmann::ordered_json o;
+            o["type"]       = "PolyLine";
+            o["ltype"]      = APIGuidToString (GetAttributeGuidFromIndex (API_LinetypeID, pl.ltypeInd)).ToCStr ().Get ();
+            o["pen_weight"] = pl.penWeight;
+            o["n_coords"]   = pl.nCoords;
+            o["n_arcs"]     = pl.nArcs;
+            if (par1 != nullptr && pl.nCoords > 0) {
+                const API_Coord* coords = static_cast<const API_Coord*> (par1);
+                for (Int32 k = 0; k < pl.nCoords; ++k) {
+                    nlohmann::ordered_json c;
+                    c["x"] = coords[k].x;
+                    c["y"] = coords[k].y;
+                    o["coordinates"].push_back (c);
+                }
+            }
+            if (par3 != nullptr && pl.nArcs > 0) {
+                const API_PolyArc* arcs = static_cast<const API_PolyArc*> (par3);
+                for (Int32 k = 0; k < pl.nArcs; ++k) {
+                    nlohmann::ordered_json a;
+                    a["begIndex"] = arcs[k].begIndex;
+                    a["endIndex"] = arcs[k].endIndex;
+                    a["arcAngle"] = arcs[k].arcAngle;
+                    o["arcs"].push_back (a);
+                }
+            }
+            arr.push_back (o);
+            ++g_shapePrimsCount;
+        } break;
+
+        case API_PrimTriID: {
+            const API_PrimTri& t = primElem->tri;
+            nlohmann::ordered_json o;
+            o["type"]  = "Triangle";
+            o["ltype"] = APIGuidToString (GetAttributeGuidFromIndex (API_LinetypeID, t.ltypeInd)).ToCStr ().Get ();
+            for (int k = 0; k < 3; ++k) {
+                nlohmann::ordered_json c;
+                c["x"] = t.c[k].x;
+                c["y"] = t.c[k].y;
+                o["points"].push_back (c);
+            }
+            arr.push_back (o);
+            ++g_shapePrimsCount;
+        } break;
+
+        case API_PrimPolyID: {
+            const API_PrimPoly& p = primElem->poly;
+            nlohmann::ordered_json o;
+            o["type"]         = "Poly";
+            o["ltype"]        = APIGuidToString (GetAttributeGuidFromIndex (API_LinetypeID, p.ltypeInd)).ToCStr ().Get ();
+            o["fill_pen"]     = p.fillPen.penIndex;
+            o["n_coords"]     = p.nCoords;
+            o["n_sub_polys"]  = p.nSubPolys;
+            o["n_arcs"]       = p.nArcs;
+            if (par1 != nullptr && p.nCoords > 0) {
+                const API_Coord* coords = static_cast<const API_Coord*> (par1);
+                for (Int32 k = 0; k < p.nCoords; ++k) {
+                    nlohmann::ordered_json c;
+                    c["x"] = coords[k].x;
+                    c["y"] = coords[k].y;
+                    o["coordinates"].push_back (c);
+                }
+            }
+            if (par2 != nullptr && p.nSubPolys > 0) {
+                const Int32* pends = static_cast<const Int32*> (par2);
+                for (Int32 k = 0; k < p.nSubPolys; ++k) {
+                    o["sub_poly_ends"].push_back (pends[k]);
+                }
+            }
+            if (par3 != nullptr && p.nArcs > 0) {
+                const API_PolyArc* arcs = static_cast<const API_PolyArc*> (par3);
+                for (Int32 k = 0; k < p.nArcs; ++k) {
+                    nlohmann::ordered_json a;
+                    a["begIndex"] = arcs[k].begIndex;
+                    a["endIndex"] = arcs[k].endIndex;
+                    a["arcAngle"] = arcs[k].arcAngle;
+                    o["arcs"].push_back (a);
+                }
+            }
+            arr.push_back (o);
+            ++g_shapePrimsCount;
+        } break;
+
+        case API_PrimTextID:    // TODO v2 — параграфы и шрифты
+        case API_PrimPictID:    // TODO — placed drawing picture
+        default:
+            // Прочие типы (Ctrl-маркеры Begin/End/HatchBorder/HatchLines/Arrow/HoledimLines/
+            // ElementRef/TextBeg/TextEnd/CWallPanel*) — игнорируем в v1.
+            break;
+    }
+    return NoError;
+}
+
+}  // namespace
+
+// Обходит ShapePrims и заполняет out["plan_view"] = { is_local, primitives, ... }.
+// Координаты — локальные (в системе элемента), transform применяет клиент.
+void Collect2DSymbolToJson (const API_Elem_Head& elemHead, nlohmann::ordered_json& out)
+{
+    nlohmann::ordered_json plan;
+    plan["is_local"]    = true;
+    plan["primitives"]  = nlohmann::json::array ();
+
+    g_shapePrimsOutput = &plan["primitives"];
+    g_shapePrimsCount  = 0;
+
+    const GSErrCode err = ACAPI_Element_ShapePrims (elemHead, ShapePrimsToJsonCallback);
+
+    g_shapePrimsOutput = nullptr;
+    plan["primitives_count"]  = g_shapePrimsCount;
+    plan["shape_prims_error"] = (err == NoError)
+        ? nlohmann::json (nullptr)
+        : nlohmann::json (static_cast<long long> (err));
+
+    out["plan_view"] = plan;
+    out["metadata"]["aspects_loaded"].push_back ("plan_view");
+}
+
 // Контуры (PolyLine/Hatch) читаются через существующий helper
 // GetPolygonsFromMemoCoords из CommandBase.hpp — без дублирования разбора.
 void Collect2DGeometryToJson (const API_Element& element, nlohmann::ordered_json& out)
