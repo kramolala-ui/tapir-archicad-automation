@@ -2802,8 +2802,27 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
             topElem.header = elemHead;
             if (ACAPI_Element_Get (&topElem) == NoError) {
                 if (tid == API_CurtainWallID) {
+                    // 2026-10-09: planeMatrix CurtainWall к субэлементам НЕ
+                    // применяем — body.tranmat субэлементов CW уже содержит
+                    // мировой transform. Проверено на БО-07 (CurtainWall,
+                    // 5 этаж): фрейм с apply=True через BulkGetElementMesh
+                    // даёт x≈102, y≈-722, z≈17.7 — реальная позиция витража
+                    // в проекте. С композитом (planeMatrix × bodyTran) тот
+                    // же фрейм уезжает в x≈4.5, y≈-2559 — не туда.
+                    //
+                    // Симптом до фикса: все 262 фрейма и 120 панелей
+                    // получали одно и то же неправильное смещение и
+                    // складывались в один кластер ~1×1.5×1.5 м вокруг
+                    // центра родителя — визуально «всё наползло, углы
+                    // потеряны».
+                    //
+                    // elementParentTran пока читаем (на случай если
+                    // planeMatrix понадобится в body-loop родителя), но
+                    // elementParentPtr НЕ выставляем: рекурсия appendSub
+                    // получит parentTran=nullptr и возьмёт body.tranmat
+                    // субэлемента как есть.
                     elementParentTran = topElem.curtainWall.planeMatrix;
-                    elementParentPtr = &elementParentTran;
+                    (void) elementParentTran;
                 } else if (tid == API_StairID) {
                     TranmatFromPlane3D (topElem.stair.basePlane, elementParentTran);
                     elementParentPtr = &elementParentTran;
