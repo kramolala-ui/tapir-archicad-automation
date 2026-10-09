@@ -1233,9 +1233,12 @@ GSErrCode __ACENV_CALL ShapePrimsToJsonCallback (const API_PrimElement* primElem
             o["pen_weight"] = pl.penWeight;
             o["n_coords"]   = pl.nCoords;
             o["n_arcs"]     = pl.nArcs;
+            // ShapePrims coords — 1-based (index 0 placeholder), как в API_ElementMemo.
+            // См. Examples/Element_Test/Src/Element_Basics.cpp CreateRectangleFill:
+            //   (*memo.coords)[1] .. (*memo.coords)[n] — реальные точки.
             if (par1 != nullptr && pl.nCoords > 0) {
                 const API_Coord* coords = static_cast<const API_Coord*> (par1);
-                for (Int32 k = 0; k < pl.nCoords; ++k) {
+                for (Int32 k = 1; k <= pl.nCoords; ++k) {
                     nlohmann::ordered_json c;
                     c["x"] = coords[k].x;
                     c["y"] = coords[k].y;
@@ -1244,7 +1247,7 @@ GSErrCode __ACENV_CALL ShapePrimsToJsonCallback (const API_PrimElement* primElem
             }
             if (par3 != nullptr && pl.nArcs > 0) {
                 const API_PolyArc* arcs = static_cast<const API_PolyArc*> (par3);
-                for (Int32 k = 0; k < pl.nArcs; ++k) {
+                for (Int32 k = 1; k <= pl.nArcs; ++k) {
                     nlohmann::ordered_json a;
                     a["begIndex"] = arcs[k].begIndex;
                     a["endIndex"] = arcs[k].endIndex;
