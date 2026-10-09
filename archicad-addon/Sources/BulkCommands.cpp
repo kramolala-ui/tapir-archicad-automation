@@ -2191,6 +2191,21 @@ GS::ObjectState BulkGetElementDataCommand::Execute (
             }
         }
 
+        // ---- plan view (2D symbol via ShapePrims) ----
+        // Только для 3D-элементов (Object/Lamp/Window/Door/CurtainWall/...);
+        // у 2D-типов (Line/PolyLine/Hatch/...) свой entity["geometry"].
+        if (withPlanView) {
+            const API_ElemTypeID pvType = GetElemTypeId (element.header);
+            const bool is2D = (pvType == API_LineID || pvType == API_PolyLineID ||
+                               pvType == API_ArcID  || pvType == API_CircleID ||
+                               pvType == API_SplineID || pvType == API_HatchID ||
+                               pvType == API_LabelID || pvType == API_TextID ||
+                               pvType == API_HotspotID);
+            if (!is2D) {
+                Collect2DSymbolToJson (element.header, entity);
+            }
+        }
+
         // ---- properties ----
         if (!propGuids.empty ()) {
             bool anyProp = false;
