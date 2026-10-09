@@ -3554,6 +3554,11 @@ GS::ObjectState BulkGetElementPlanViewCommand::Execute (
 //
 //  Пример (DevKit): Examples/Database_Control/Src/Database_Control.cpp:284-312.
 
+// WindowTypeToName / NameToWindowType / ContextToJson используются только из
+// BulkGetContext/SwitchContext Execute, которые на 27+ заменены stub-ветками.
+// На 27+ эти функции были бы unused → C4505 → /WX error. Оборачиваем.
+#if !defined(ServerMainVers_2700)
+
 namespace {
 
 const char* WindowTypeToName (API_WindowTypeID t)
