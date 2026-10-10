@@ -4053,6 +4053,40 @@ GS::ObjectState BulkGetElementMeshCommand::Execute (
             totalTriangles += triangles.size () / 3;
         }
 
+        // 2026-10-10: debug — сырой body.tranmat и поля object для Object/Lamp,
+        // чтобы понять, что именно Archicad кладёт в body.tranmat под капотом.
+        // Не перезаписываем, а только сравниваем с override в ExtractElementMesh.
+        {
+            const API_ElemTypeID dbgTid = GetElemTypeId (element.header);
+            if (dbgTid == API_ObjectID || dbgTid == API_LampID) {
+                API_Element dbgElem = {};
+                dbgElem.header.guid = element.header.guid;
+                if (ACAPI_Element_Get (&dbgElem) == NoError) {
+                    row["dbg_object_angle"]     = dbgElem.object.angle;
+                    row["dbg_object_reflected"] = dbgElem.object.reflected ? 1 : 0;
+                    row["dbg_object_x_ratio"]   = dbgElem.object.xRatio;
+                    row["dbg_object_y_ratio"]   = dbgElem.object.yRatio;
+                    row["dbg_object_pos_x"]     = dbgElem.object.pos.x;
+                    row["dbg_object_pos_y"]     = dbgElem.object.pos.y;
+                    row["dbg_object_level"]     = dbgElem.object.level;
+                }
+                API_ElemInfo3D dbgInfo = {};
+                if (ACAPI_ModelAccess_Get3DInfo (element.header, &dbgInfo) == NoError
+                    && dbgInfo.fbody > 0 && dbgInfo.lbody >= dbgInfo.fbody) {
+                    API_Component3D dbgComp = {};
+                    dbgComp.header.typeID = API_BodyID;
+                    dbgComp.header.index  = dbgInfo.fbody;
+                    if (ACAPI_ModelAccess_GetComponent (&dbgComp) == NoError) {
+                        nlohmann::ordered_json tr = nlohmann::json::array ();
+                        for (int kk = 0; kk < 12; ++kk) {
+                            tr.push_back (dbgComp.body.tranmat.tmx[kk]);
+                        }
+                        row["dbg_raw_tranmat"] = tr;
+                    }
+                }
+            }
+        }
+
         row["vertexCount"]   = static_cast<uint64_t> (vertices.size () / 3);
         row["triangleCount"] = static_cast<uint64_t> (triangles.size () / 3);
         row["edgeCount"]     = static_cast<uint64_t> (edges.size () / 2);
