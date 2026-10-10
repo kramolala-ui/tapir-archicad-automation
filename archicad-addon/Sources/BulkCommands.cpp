@@ -2965,14 +2965,24 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
             API_Element objElem = {};
             objElem.header.guid = elemHead.guid;
             if (ACAPI_Element_Get (&objElem) == NoError) {
-                const double a  = objElem.object.angle;
-                const double ca = std::cos (a);
-                const double sa = std::sin (a);
-                API_Tranmat m = {};
-                m.tmx[0] =  ca; m.tmx[1] = -sa; m.tmx[2]  = 0.0; m.tmx[3]  = bodyTran.tmx[3];
-                m.tmx[4] =  sa; m.tmx[5] =  ca; m.tmx[6]  = 0.0; m.tmx[7]  = bodyTran.tmx[7];
-                m.tmx[8] = 0.0; m.tmx[9] = 0.0; m.tmx[10] = 1.0; m.tmx[11] = bodyTran.tmx[11];
-                bodyTran = m;
+                // 2026-10-10: only for NON-reflected objects we rebuild the
+                // matrix from object.angle. For reflected objects we use
+                // body.tranmat as-is: Archicad GDL engine already accounts
+                // for the reflected flag and provides a correct world matrix.
+                // Rebuilding drops the reflected state -> visible flip.
+                // Verified on pair B791AC2D (angle=pi/2, refl=True) /
+                // 6E9EB561 (angle=pi, refl=True).
+                if (!objElem.object.reflected) {
+                    const double a  = objElem.object.angle;
+                    const double ca = std::cos (a);
+                    const double sa = std::sin (a);
+                    API_Tranmat m = {};
+                    m.tmx[0] =  ca; m.tmx[1] = -sa; m.tmx[2]  = 0.0; m.tmx[3]  = bodyTran.tmx[3];
+                    m.tmx[4] =  sa; m.tmx[5] =  ca; m.tmx[6]  = 0.0; m.tmx[7]  = bodyTran.tmx[7];
+                    m.tmx[8] = 0.0; m.tmx[9] = 0.0; m.tmx[10] = 1.0; m.tmx[11] = bodyTran.tmx[11];
+                    bodyTran = m;
+                }
+                // reflected: leave bodyTran untouched (uses body.tranmat).
             }
         }
 
