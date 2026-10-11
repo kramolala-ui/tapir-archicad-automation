@@ -2962,18 +2962,25 @@ bool ExtractElementMesh (const API_Elem_Head& elemHead,
         // local вершины приходят в единицах модели, повторно применять
         // их нельзя (получим ×3 размеры у объектов с ratio≠1).
         if (applyTransform && (tid == API_ObjectID || tid == API_LampID)) {
-            API_Element objElem = {};
-            objElem.header.guid = elemHead.guid;
-            if (ACAPI_Element_Get (&objElem) == NoError) {
-                const double a  = objElem.object.angle;
-                const double ca = std::cos (a);
-                const double sa = std::sin (a);
-                API_Tranmat m = {};
-                m.tmx[0] =  ca; m.tmx[1] = -sa; m.tmx[2]  = 0.0; m.tmx[3]  = bodyTran.tmx[3];
-                m.tmx[4] =  sa; m.tmx[5] =  ca; m.tmx[6]  = 0.0; m.tmx[7]  = bodyTran.tmx[7];
-                m.tmx[8] = 0.0; m.tmx[9] = 0.0; m.tmx[10] = 1.0; m.tmx[11] = bodyTran.tmx[11];
-                bodyTran = m;
-            }
+            // 2026-10-11: override bodyTran УДАЛЁН.
+            //
+            // Раньше здесь строилась матрица R(-a) только из object.angle,
+            // но это теряло GDL/Rotation и MEP-углы (RotationAroundZAxis /
+            // RotationAroundDAxis / RotationAroundWAxis). У MEP-отводов
+            // GDL/Rotation часто НЕ совпадает с object.angle (например,
+            // object_angle=5pi/4 при GDL/Rotation=0), из-за чего override
+            // давал неверный мировой разворот детали.
+            //
+            // body.tranmat от ACAPI_ModelAccess_Get3DInfo (API_Component3D
+            // .body.tranmat) уже включает ВСЕ GDL-трансформации: placement
+            // + GDL rotation + MEP connection rotations + reflected state.
+            // Используем его как есть.
+            //
+            // Проверено на паре 0EE369AA / 91BBA8A0 (одинаковые отводы,
+            // разные object_angle) и на 4A7F5D08 (другой libPart).
+            // Аналог 2D-ноды bulk_load_2d_plan, где world берётся напрямую
+            // без transform — там отображение корректное.
+            (void) 0;
         }
 
         // Композит с родительским transform. Источники:
