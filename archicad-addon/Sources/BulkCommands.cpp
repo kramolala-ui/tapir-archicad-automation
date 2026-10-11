@@ -2138,6 +2138,20 @@ GS::ObjectState BulkGetElementDataCommand::Execute (
         // API_AttributeIndex — typedef Int32 в AC25/26, но класс в AC27+;
         // GetAttributeIndex (MigrationHelper.hpp) даёт int в обоих случаях.
         params["layer_index"] = static_cast<int64_t> (GetAttributeIndex (element.header.layer));
+
+        // ---- element_id (человекочитаемый ID 'Ст. 1, 1А') ---- //
+        // Только под флагом (GetMemo — отдельный вызов на элемент,
+        // дорого на больших выборках). Симметрично CollectElementData
+        // и записи через BulkSetElementData::element_id.
+        if (withElemInfoString) {
+            API_ElementMemo infoMemo = {};
+            const GS::OnExit infoGuard ([&infoMemo] () { ACAPI_DisposeElemMemoHdls (&infoMemo); });
+            if (ACAPI_Element_GetMemo (guid, &infoMemo, APIMemoMask_ElemInfoString) == NoError
+                    && infoMemo.elemInfoString != nullptr) {
+                params["element_id"] = infoMemo.elemInfoString->ToCStr ().Get ();
+            }
+        }
+
         // ---- Object-specific fields ----
         // Для Object (самый частый в проекте) читаем всё нужное
         // для воссоздания в другом проекте (BulkCreateElementsFromData):
