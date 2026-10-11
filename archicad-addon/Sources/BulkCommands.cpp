@@ -5921,6 +5921,24 @@ GS::ObjectState BulkSetElementDataCommand::Execute (
                 }
             }
 
+            // 1b. Element info string (elemInfoString) — через memo, отдельным
+            // ACAPI_Element_Change. Симметрично чтению element_id в
+            // CollectElementData (см. withElemInfoString).
+            if (hasElemInfoStringChange) {
+                API_ElementMemo infoMemo = {};
+                infoMemo.elemInfoString = new GS::UniString (elemInfoStringValue.c_str ());
+                const GSErrCode e = ACAPI_Element_Change (&element, nullptr, &infoMemo,
+                                                          APIMemoMask_ElemInfoString, true);
+                ACAPI_DisposeElemMemoHdls (&infoMemo);
+                if (e != NoError) {
+                    nlohmann::ordered_json err2;
+                    err2["msg"]  = "ACAPI_Element_Change(elemInfoString) failed";
+                    err2["code"] = static_cast<int64_t> (e);
+                    srcOut["errors"].push_back (err2);
+                    ++errorsCount;
+                }
+            }
+
             // 2. GDL parameters
             if (!gdlChanges.empty ()) {
                 std::vector<std::string> notApplied;
