@@ -5754,6 +5754,12 @@ GS::ObjectState BulkSetElementDataCommand::Execute (
             std::vector<ClassChange>    classChanges;
             std::vector<PropertyChange> propChanges;
 
+            // element_id (человекочитаемый ID) — отдельный канал через
+            // memo (APIMemoMask_ElemInfoString), не через element mask.
+            // Отдельные флаг+значение, чтобы не плодить std::optional<>.
+            bool        hasElemInfoStringChange = false;
+            std::string elemInfoStringValue;
+
             for (auto it = task.parameters.begin (); it != task.parameters.end (); ++it) {
                 const std::string key = it.key ();
                 const auto& val = it.value ();
