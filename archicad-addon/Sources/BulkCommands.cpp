@@ -1682,6 +1682,19 @@ nlohmann::ordered_json CollectElementData (const ElementDataOptions& opts)
         params["story_index"] = static_cast<int64_t> (element.header.floorInd);
         params["layer_index"] = static_cast<int64_t> (GetAttributeIndex (element.header.layer));
 
+        // ---- element_id (человекочитаемый ID 'Ст. 1, 1А') ---- //
+        // Только под флагом (GetMemo — отдельный вызов на элемент,
+        // дорого на больших выборках). Симметрично записи через
+        // BulkSetElementData::element_id.
+        if (opts.withElemInfoString) {
+            API_ElementMemo infoMemo = {};
+            const GS::OnExit infoGuard ([&infoMemo] () { ACAPI_DisposeElemMemoHdls (&infoMemo); });
+            if (ACAPI_Element_GetMemo (guid, &infoMemo, APIMemoMask_ElemInfoString) == NoError
+                    && infoMemo.elemInfoString != nullptr) {
+                params["element_id"] = infoMemo.elemInfoString->ToCStr ().Get ();
+            }
+        }
+
         if (GetElemTypeId (element.header) == API_ObjectID) {
             params["object_lib_part_index"] = static_cast<int64_t> (element.object.libInd);
             params["object_pos_x"]  = element.object.pos.x;
