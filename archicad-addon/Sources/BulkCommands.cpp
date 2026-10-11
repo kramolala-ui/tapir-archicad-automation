@@ -2693,12 +2693,28 @@ GS::ObjectState BulkCloneLabelsCommand::Execute (
 namespace {
 
 // Применяет 4x3 трансформацию body.tranmat к точке (x,y,z).
-// Индексация tmx[] — как в AddMorphBodyFromMemo (ExtendedElementCommands.cpp:3175).
+//
+// 2026-10-11: ROW-MAJOR чтение. API_Tranmat упакован как
+//   tmx[0..2]  = строка 0 матрицы (коэффициенты при x, y, z для x')
+//   tmx[3]     = translation.x
+//   tmx[4..6]  = строка 1 (для y')
+//   tmx[7]     = translation.y
+//   tmx[8..10] = строка 2 (для z')
+//   tmx[11]    = translation.z
+//
+// Раньше читали column-major (tmx[0], tmx[4], tmx[8] как столбец 0),
+// что давало транспонированную матрицу поворота = R(-a) вместо R(a).
+// На углах 0 и pi ошибка невидима (R(0)=I, R(pi)=-I симметричны),
+// а на pi/2 и др. объект зеркалился относительно pos. Диагностика:
+// 7C4ACA40 (angle=pi/2, refl=False) — наш world y[19.3151,19.3816]
+// против Archicad bbox и 2D PLAN [19.2486,19.3151]; diff = размеру
+// детали (0.0665). Побитовое сравнение raw_tranmat для angle=pi/2
+// подтверждает: row-major даёт R(pi/2), column-major даёт R(-pi/2).
 void ApplyTranmat (const API_Tranmat& t, double& x, double& y, double& z)
 {
-    const double nx = t.tmx[0]*x + t.tmx[4]*y + t.tmx[8]*z  + t.tmx[3];
-    const double ny = t.tmx[1]*x + t.tmx[5]*y + t.tmx[9]*z  + t.tmx[7];
-    const double nz = t.tmx[2]*x + t.tmx[6]*y + t.tmx[10]*z + t.tmx[11];
+    const double nx = t.tmx[0]*x + t.tmx[1]*y + t.tmx[2]*z  + t.tmx[3];
+    const double ny = t.tmx[4]*x + t.tmx[5]*y + t.tmx[6]*z  + t.tmx[7];
+    const double nz = t.tmx[8]*x + t.tmx[9]*y + t.tmx[10]*z + t.tmx[11];
     x = nx; y = ny; z = nz;
 }
 
