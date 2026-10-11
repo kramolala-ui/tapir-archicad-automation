@@ -5489,10 +5489,29 @@ GSErrCode ApplyPropertyBatch (const API_Guid& elemGuid,
     for (API_Property& pv : propValues) {
         GS::UniString* valueStr = valuesByGuid.GetPtr (pv.definition.guid);
         if (valueStr == nullptr) continue;
+
+        // Пропускаем non-writable properties заранее — они дадут
+        // ошибку на SetPropertyValueFromString и уронят всю пачку.
+        // См. API_PropertyDefinition.canValueBeEditable (DevKit).
+        if (!pv.definition.canValueBeEditable) {
+            notAppliedOut.push_back (pv.definition.guid);
+            continue;
+        }
+
+        // НЕ роняем батч на ошибке одного property: bool/locked/computed
+        // свойства часто отдают APIERR от Set*FromString, но остальные
+        // в пачке валидные (int/str) и должны записаться. Тот же паттерн,
+        // что в ApplyGdlBatch (re-read + notAppliedOut).
         GSErrCode e = ACAPI_Property_SetPropertyValueFromString (*valueStr, conversionUtils, &pv);
-        if (e != NoError) return e;
+        if (e != NoError) {
+            notAppliedOut.push_back (pv.definition.guid);
+            continue;
+        }
         e = ACAPI_Element_SetProperty (elemGuid, pv);
-        if (e != NoError) return e;
+        if (e != NoError) {
+            notAppliedOut.push_back (pv.definition.guid);
+            continue;
+        }
     }
 
     // Re-read to detect silently-ignored properties (e.g. read-only Pset).
