@@ -1811,6 +1811,9 @@ nlohmann::ordered_json CollectElementData (const ElementDataOptions& opts)
                     if (ACAPI_Property_GetPropertyValueString (p, &val) == NoError) {
                         const std::string key = APIGuidToString (p.definition.guid).ToCStr ().Get ();
                         params[key] = val.ToCStr ().Get ();
+                        // Флаг writable — клиент может отфильтровать
+                        // non-editable properties до BulkSetElementData.
+                        params["editable/" + key] = p.definition.canValueBeEditable;
                         anyProp = true;
                     }
                 }
@@ -2290,6 +2293,9 @@ GS::ObjectState BulkGetElementDataCommand::Execute (
                     if (ACAPI_Property_GetPropertyValueString (p, &val) == NoError) {
                         const std::string key = APIGuidToString (p.definition.guid).ToCStr ().Get ();
                         params[key] = val.ToCStr ().Get ();
+                        // Флаг writable — клиент может отфильтровать
+                        // non-editable properties до BulkSetElementData.
+                        params["editable/" + key] = p.definition.canValueBeEditable;
                         anyProp = true;
                     }
                 }
