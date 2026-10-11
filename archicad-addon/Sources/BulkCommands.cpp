@@ -5646,10 +5646,20 @@ GSErrCode ApplyClassBatch (const API_Guid& elemGuid,
         const GSErrCode getErr = ACAPI_Element_GetClassificationInSystem (elemGuid, cc.systemGuid, existing);
         if (getErr == NoError && existing.guid != APINULLGuid) {
             const GSErrCode rmErr = ACAPI_Element_RemoveClassificationItem (elemGuid, existing.guid);
-            if (rmErr != NoError) return rmErr;
+            // НЕ роняем пачку: класс может быть в locked-системе или
+            // отсутствовать в проекте. Остальные классы элемента —
+            // валидные и должны записаться. Симметрично ApplyPropertyBatch
+            // и ApplyGdlBatch.
+            if (rmErr != NoError) {
+                notAppliedOut.push_back (cc.systemGuid);
+                continue;
+            }
         }
         const GSErrCode addErr = ACAPI_Element_AddClassificationItem (elemGuid, cc.itemGuid);
-        if (addErr != NoError) return addErr;
+        if (addErr != NoError) {
+            notAppliedOut.push_back (cc.systemGuid);
+            continue;
+        }
 
         // Verify the item was really set (locked system → silent ignore).
         API_ClassificationItem verify = {};
