@@ -2020,6 +2020,10 @@ GS::ObjectState BulkGetElementDataCommand::Execute (
     bool readSelection = false;   // selected=true: читать текущее выделение
     bool withGroupInfo = true;    // добавлять group_guid в params
     bool withGroupMembers = false; // добавлять groups[...] в ответ
+    // Читать человекочитаемый ID элемента ('Ст. 1, 1А') через
+    // APIMemoMask_ElemInfoString. Дорого (GetMemo на элемент) —
+    // выключено по умолчанию, симметрично CollectElementData.
+    bool withElemInfoString = false;
 
     try {
         nlohmann::json j = nlohmann::json::from_msgpack (raw);
