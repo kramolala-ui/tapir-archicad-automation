@@ -5785,6 +5785,24 @@ GS::ObjectState BulkSetElementDataCommand::Execute (
                     continue;
                 }
 
+                // ---- element_id: человекочитаемый ID ('Ст. 1, 1А') ----
+                // Через memo (APIMemoMask_ElemInfoString), не через element
+                // mask. Симметрично чтению element_id в CollectElementData.
+                if (key == "element_id") {
+                    if (!val.is_string ()) {
+                        nlohmann::ordered_json e;
+                        e["key"] = key;
+                        e["msg"] = "expected string";
+                        srcOut["errors"].push_back (e);
+                        ++errorsCount;
+                    } else {
+                        elemInfoStringValue = val.get<std::string> ();
+                        hasElemInfoStringChange = true;
+                        srcOut["applied"].push_back (key);
+                    }
+                    continue;
+                }
+
                 switch (DetectSetKeyKind (key)) {
                     case SetKeyKind::Story: {
                         if (!val.is_number_integer ()) {
