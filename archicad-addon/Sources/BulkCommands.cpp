@@ -1081,6 +1081,12 @@ struct ElementDataOptions {
     bool                         withPlanView = false;
     bool                         withGroupInfo = true;
     bool                         withGroupMembers = false;
+
+    // Читать ли человекочитаемый ID элемента ('Ст. 1, 1А')
+    // через APIMemoMask_ElemInfoString. Дорого (GetMemo на каждый
+    // элемент), поэтому выключено по умолчанию. Симметрично записи
+    // через BulkSetElementData::element_id.
+    bool                         withElemInfoString = false;
 };
 
 // Заполняет out["geometry"] 2D-геометрией элемента (PolyLine / Line / Arc /
