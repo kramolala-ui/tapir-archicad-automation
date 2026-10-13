@@ -1480,6 +1480,8 @@ GSErrCode Initialize (void)
             bulkCommands, "0.1.0",
             "(experimental) Read project info via the bulk channel. Input payload: {} (empty). Output payload: {project_path, project_name, is_untitled, is_teamwork, user_id, workgroup_mode, project_modi_stamp, error}. Adds project_modi_stamp (UInt64 from API_ProjectInfo.modiStamp) which the JSON GetProjectInfo does not expose; useful for fast file-level / project-level change detection without reading any elements."
         );
+        #endif  // TAPIR_HAS_PROJECT_DIFF
+        #if TAPIR_HAS_EXTENDED_BULK
         err |= RegisterCommand<BulkGetElementHeadersCommand> (
             bulkCommands, "0.1.0",
             "(experimental) Mass-read only API_Elem_Head fields for a list of guids. Input payload: {elements: [guids]}. Output payload: {rows: [{elementId, modiStamp, type, floorInd, layer, groupGuid, hotlinkGuid, hasMemo, userId, renovationStatus, error}]}. No memo, no properties, no mesh - ~0.05-0.1 ms/element. Companion to BulkGetProjectDiff and fallback for change detection when a diff state file is not available."
