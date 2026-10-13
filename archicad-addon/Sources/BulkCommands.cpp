@@ -6816,7 +6816,9 @@ GS::ObjectState BulkGetIFCPropertiesCommand::Execute (
         }
 
         GS::Array<API_IFCProperty> props;
-        const GSErrCode e = ACAPI_Element_GetIFCProperties (guid, &props);
+        // storedOnly=false — документация DevKit: «Get only the core data
+        // without the derived content, must be false in most cases».
+        const GSErrCode e = ACAPI_Element_GetIFCProperties (guid, false, &props);
         if (e != NoError) {
             row["error"] = std::string ("GetIFCProperties failed: ") +
                            std::to_string (static_cast<long long> (e));
