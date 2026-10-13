@@ -7898,6 +7898,7 @@ GS::ObjectState BulkValidatePropertyDefinitionsCommand::Execute (
     out["with_expression"]       = static_cast<int64_t> (0);
     out["valid_count"]           = static_cast<int64_t> (0);
     out["invalid_count"]         = static_cast<int64_t> (0);
+    out["unverifiable_count"]    = static_cast<int64_t> (0);
     out["skipped_no_expression"] = static_cast<int64_t> (0);
     out["invalid"]               = nlohmann::json::array ();
 
