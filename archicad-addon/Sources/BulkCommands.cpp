@@ -6551,12 +6551,40 @@ GS::ObjectState BulkCreatePropertyDefinitionsCommand::Execute (
             def.measureType         = ParseMeasureType (item.value ("measure_type", "default"));
             def.canValueBeEditable  = item.value ("can_value_be_editable", true);
 
-            // Default value (basicValue) — если не формула.
-            // Всегда инициализируем type, иначе expression-валидация упадёт.
-            def.defaultValue.basicValue.singleVariant.variant.type = valueType;
-            if (item.contains ("default_value") && !item["default_value"].is_null ()) {
-                FillVariant (def.defaultValue.basicValue.singleVariant.variant, valueType, item["default_value"]);
+            // Default value (basicValue).
+            //
+            // Три случая:
+            //   • single + обычное свойство — type инициализируется
+            //     valueType; значение из payload если есть, иначе
+            //     Undefined (свойство без дефолта).
+            //   • single_enum — default = keyVariant ПЕРВОГО enum-значения
+            //     (по эталону Graphisoft; ACAPI этого требует).
+            //   • multi_enum — default = listVariant со всеми keyVariant.
+            if (collType == API_PropertySingleChoiceEnumerationCollectionType
+                && !enumValues.IsEmpty ()) {
+                def.defaultValue.basicValue.singleVariant.variant =
+                    enumValues[0].keyVariant;
                 def.defaultValue.basicValue.variantStatus = API_VariantStatusNormal;
+            } else if (collType == API_PropertyMultipleChoiceEnumerationCollectionType
+                       && !enumValues.IsEmpty ()) {
+                for (const auto& v : enumValues) {
+                    def.defaultValue.basicValue.listVariant.variants.Push (
+                        v.keyVariant);
+                }
+                def.defaultValue.basicValue.variantStatus = API_VariantStatusNormal;
+            } else {
+                // Обычное single-свойство.
+                // Всегда инициализируем type, иначе expression-валидация
+                // упадёт.
+                def.defaultValue.basicValue.singleVariant.variant.type = valueType;
+                if (item.contains ("default_value") &&
+                    !item["default_value"].is_null ()) {
+                    FillVariant (
+                        def.defaultValue.basicValue.singleVariant.variant,
+                        valueType, item["default_value"]);
+                    def.defaultValue.basicValue.variantStatus =
+                        API_VariantStatusNormal;
+                }
             }
 
             // Формула (expression)
