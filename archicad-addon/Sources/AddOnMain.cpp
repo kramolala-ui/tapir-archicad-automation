@@ -1502,6 +1502,12 @@ GSErrCode Initialize (void)
             bulkCommands, "0.1.0",
             "Update property definitions in place. Input payload: {updates: [{guid, name?, description?, value_type?, measure_type?, can_value_be_editable?, has_expression?, property_expressions?: [str], clear_expression?: bool, availability?: [class-guid], clear_availability?: bool, default_value?}]}. Читает текущее определение перед изменением — незаданные поля сохраняются. Output payload: {updated: [{guid, ok, error}], updated_count, errors_count}. One undo barrier for the whole batch."
         );
+        #if TAPIR_HAS_PROPERTY_EXPR_CHECK
+        err |= RegisterCommand<BulkValidatePropertyDefinitionsCommand> (
+            bulkCommands, "0.1.0",
+            "Validate property expressions. Input payload: {guids?: [...]} | {all?: true}. Output payload: {checked_count, with_expression, valid_count, invalid_count, skipped_no_expression, invalid: [{guid, name, errors: [{error_code, expression}]}]}. Использует ACAPI_Goodies(APIAny_CheckPropertyExpressionStringID) — не создаёт и не меняет определения, только читает. Только AC26."
+        );
+        #endif  // TAPIR_HAS_PROPERTY_EXPR_CHECK
         err |= RegisterCommand<BulkGetIFCPropertiesCommand> (
             bulkCommands, "0.1.0",
             "Read IFC properties of many elements. Input payload: {elements: [guids]}. Output payload: {rows: [{elementId, properties: [{propertySetName, propertyName, propertyDescription, propertyType: 'single'|'bounded'|'list'|'enumerated'|'table', readOnly, value, valueType, primitiveType}], error}]}. Only single-value properties carry a value; other IFC property types are listed without a value for now."
