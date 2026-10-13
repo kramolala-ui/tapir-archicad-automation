@@ -8949,6 +8949,8 @@ GS::ObjectState BulkDeleteNavigatorItemCommand::Execute (
     return response;
 }
 
+#endif  // TAPIR_HAS_NAVIGATOR_API
+
 #endif  // TAPIR_HAS_EXTENDED_BULK
 
 BulkSetElementDataCommand::BulkSetElementDataCommand () :
