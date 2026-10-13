@@ -6212,7 +6212,7 @@ GS::ObjectState BulkGetElementHeadersCommand::Execute (
 
         row["elementId"]       = APIGuidToString (head.guid).ToCStr ().Get ();
         row["modiStamp"]       = static_cast<int64_t> (head.modiStamp);
-        row["type"]            = HeaderTypeName (head.type);
+        row["type"]            = HeaderTypeName (GetElemTypeId (head));
         row["floorInd"]        = static_cast<int64_t> (head.floorInd);
         row["layer"]           = static_cast<int64_t> (GetAttributeIndex (head.layer));
         if (head.groupGuid != APINULLGuid) {
