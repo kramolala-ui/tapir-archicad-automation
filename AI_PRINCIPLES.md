@@ -979,6 +979,223 @@ AddOn, не наш баг. Для MEP — обход через `spatial_query` 
 **История §4c.** Раздел с номером 4c в файле отсутствует (сразу 4d —
 нумерационный пропуск). Не трогаем — так исторически.
 
+**2026-10-13:** Команды 2-й/3-й волн (ProjectDiff, ProjectInfo,
+ElementHeaders, Property x4, IFC x3) помечены version-guard'ами —
+см. §4g. ProjectDiff вырезается на AC25 и AC29; остальные 9 — только
+на AC29.
+
+---
+
+## 4g. Версионные guards AC25-29 и триада файлов (2026-10-13)
+
+### Зачем это
+
+API Archicad меняется между версиями. Проект собирается на матрице
+25/26/27/28/29 с `/WX` (warnings-as-errors). Один и тот же код должен
+работать на всех пяти. Для этого — два макроса-guard'а в
+`BulkCommands.hpp`, плюс строгое правило: guard в одном файле — guard
+во всех трёх.
+
+### Два guard'а
+
+    TAPIR_HAS_PROJECT_DIFF — 0 для AC25 и AC29, 1 для AC26/27/28.
+    TAPIR_HAS_EXTENDED_BULK — 0 для AC29, 1 для AC25/26/27/28.
+
+Оба — в начале `archicad-addon/Sources/BulkCommands.hpp`:
+
+    #if defined(ServerMainVers_2900)
+    #  define TAPIR_HAS_EXTENDED_BULK 0
+    #else
+    #  define TAPIR_HAS_EXTENDED_BULK 1
+    #endif
+
+    #if defined(ServerMainVers_2500) || defined(ServerMainVers_2900)
+    #  define TAPIR_HAS_PROJECT_DIFF 0
+    #else
+    #  define TAPIR_HAS_PROJECT_DIFF 1
+    #endif
+
+**Почему PROJECT_DIFF отдельный от EXTENDED_BULK.** В AC25 у
+`ACAPI_ElemDifferenceGenerator_GenerateDifference` 4-й аргумент —
+указатель (`API_ElemDifference*`), в AC26+ — ссылка
+(`API_ElemDifference&`). И поля `isEnvironmentChanged` в AC25 нет.
+Проще вырезать команду, чем городить version-шим. А команды
+ProjectInfo / ElementHeaders / Property / IFC в AC25 есть — они под
+EXTENDED_BULK.
+
+### Таблица сборки
+
+| Версия | PROJECT_DIFF | EXTENDED_BULK | ProjectDiff | ProjectInfo + Headers + Prop x4 + IFC x3 | Классические |
+|---|---|---|---|---|---|
+| AC25   | 0 | 1 | вырезан | есть | есть |
+| AC26   | 1 | 1 | есть    | есть | есть |
+| AC27   | 1 | 1 | есть    | есть | есть |
+| AC28   | 1 | 1 | есть    | есть | есть |
+| AC29   | 0 | 0 | вырезан | вырезано | есть |
+
+«Классические» — Ping, Get/Set texts, GetElementMesh, GetElementData,
+SetElementData, DeleteElements, CloneLabels, Move/Rotate,
+BulkCreate-семейство. Они без guard'а, работают везде.
+
+### Триада файлов
+
+Новая Bulk-команда = СОГЛАСОВАННЫЕ правки в ТРЁХ файлах:
+
+    1. archicad-addon/Sources/BulkCommands.hpp
+       — объявление класса (под guard'ом).
+    2. archicad-addon/Sources/BulkCommands.cpp
+       — реализация: конструктор, GetName, GetInputParametersSchema,
+         GetRawResponseSchema, Execute (под тем же guard'ом).
+    3. archicad-addon/Sources/AddOnMain.cpp
+       — RegisterCommand<Класс>(bulkCommands, "<ver>", "<desc>")
+         (тоже под тем же guard'ом).
+
+**ГЛАВНОЕ ПРАВИЛО:** если guard есть в одном из трёх — он должен
+быть и в двух других. Что ломается при рассинхроне:
+
+  • hpp без cpp — undefined reference на линковке;
+  • cpp без hpp — warning C4273 (inconsistent dll linkage);
+  • регистрация без hpp/cpp — команда не появится у пользователя;
+  • hpp+cpp без регистрации — то же, но молча.
+
+**Перед добавлением новой команды** — прочитай ОДНУ существующую
+сквозь все три файла (например `BulkGetProjectInfoCommand`),
+скопируй каркас, потом замени тело. Не пиши с нуля.
+
+### Warnings-as-errors — C4996 и pragma
+
+Проект собирается с `/WX`. Любой warning = красный CI.
+
+**Симптом:** в AC26 `ACAPI_Element_GetIFCProperties` /
+`SetIFCProperty` / `RemoveIFCProperty` помечены deprecated (DevKit
+рекомендует `IFCAPI::v1::*`). Любой их вызов → C4996 → C2220
+(«warning treated as error») → fail сборки.
+
+**Что делать.** Новый `IFCAPI::v1` использует hook-механику, это не
+прямая замена — переезд отдельная задача. Пока используем старый
+API, но **точечно глушим**:
+
+    #pragma warning(push)
+    #pragma warning(disable: 4996)
+    const GSErrCode e = ACAPI_Element_GetIFCProperties (guid, false, &props);
+    #pragma warning(pop)
+
+**Правила:**
+
+  • `push`/`pop` — обязательно парой, иначе подавление утечёт дальше
+    по файлу и скроет другие warnings.
+  • `disable` только 4996, не «весь warning-класс».
+  • **НЕ** отключать C4996 глобально в CMake — потеряешь контроль
+    над другими deprecated-вызовами.
+  • Рядом с pragma — комментарий: почему используем deprecated и
+    на что потом менять (например «см. IFCAPI::v1::GetLocalProperties»).
+
+### AC25-совместимость — что нельзя вызывать напрямую
+
+**`element.header.typeID`** — НЕ существует в AC25.
+В AC25 поле `typeID` (простой enum), в AC26+ — `type`
+(`struct API_ElemType` с полем `.typeID`). Правильно —
+`GetElemTypeId (element.header)` из `MigrationHelper.hpp`. Он знает
+оба варианта через `#ifdef ServerMainVers_2600`.
+
+    // ❌ ломается в AC25:
+    row["type"] = HeaderTypeName (head.type);
+
+    // ✅ везде:
+    row["type"] = HeaderTypeName (GetElemTypeId (head));
+
+Сигнатуру `HeaderTypeName` тогда тоже надо принять по `API_ElemTypeID`,
+а не по `const API_ElemType&`.
+
+**`ACAPI_ElemDifferenceGenerator_GenerateDifference`:**
+
+  • AC25 — 4-й аргумент `API_ElemDifference *` (указатель);
+  • AC26+ — 4-й аргумент `API_ElemDifference &` (ссылка).
+
+Разные сигнатуры. Мы предпочли вырезать ProjectDiff для AC25
+(TAPIR_HAS_PROJECT_DIFF=0), а не делать version-шим.
+
+**`API_ElemDifference.isEnvironmentChanged`** — только с AC26.
+В AC25 поля нет. Тоже под TAPIR_HAS_PROJECT_DIFF.
+
+**`API_IFCProperty`** — есть в AC25/26/27/28, нет в AC29.
+Переехало в `IFCAPI::v1::*`. Под TAPIR_HAS_EXTENDED_BULK.
+
+**Где смотреть version-хелперы.** `archicad-addon/Sources/MigrationHelper.hpp`.
+Там уже есть inline-функции для version-различий: `GetElemTypeId`,
+`GetAttributeIndex`, `ElementTypeName`, `StringToElemTypeID`. Если
+нужной нет — допиши туда, **не растаскивай `#ifdef ServerMainVers_*`
+по командам**. Один источник — один файл.
+
+### Регистрация команды с guard'ом — пример
+
+    #if TAPIR_HAS_PROJECT_DIFF
+    err |= RegisterCommand<BulkGetProjectDiffCommand> (
+        bulkCommands, "0.1.0",
+        "<описание>"
+    );
+    #endif
+    #if TAPIR_HAS_EXTENDED_BULK
+    err |= RegisterCommand<BulkGetProjectInfoCommand> (
+        bulkCommands, "0.1.0",
+        "<описание>"
+    );
+    err |= RegisterCommand<BulkGetElementHeadersCommand> (
+        bulkCommands, "0.1.0", "<описание>"
+    );
+    // ... остальные 7 из EXTENDED_BULK
+    #endif
+    AddCommandGroup (bulkCommands);
+
+**Правила:**
+
+  • Все регистрации Bulk-команд — внутри блока `{ // Bulk Commands ... }`.
+  • Классические (Ping, SetElementData, Delete, CloneLabels, BulkCreate*)
+    — БЕЗ guard'а, до этих `#if`.
+  • Версия в `RegisterCommand` — НЕ версия аддона, а версия API
+    КОНКРЕТНОЙ команды. Поднимай при breaking changes wire-формата
+    (переименование полей, смена типов). Опциональные параметры —
+    не breaking, версию не поднимают.
+
+### Пошаговый алгоритм — новая Bulk-команда
+
+1. **Решить: нужен ли guard.** Команда использует API, которого нет
+   в AC25/AC29? Прочитай DevKit соответствующей версии (см. §2c)
+   или спроси у пользователя. Если да — выбери, под каким guard'ом:
+   PROJECT_DIFF (только ProjectDiff), EXTENDED_BULK (Property/IFC/Info/Headers),
+   без guard'а (классические).
+2. **hpp** — объявление класса. Если guard — под ним. Сначала —
+   прочитай hpp целиком (`action=request`), чтобы понять, где именно
+   вставить (после классических, до/после ProjectDiff, порядок в
+   EXTENDED_BULK-блоке).
+3. **cpp** — реализация. Если guard — под ним. Скопируй каркас
+   существующей команды (`BulkPingCommand` — самый простой) и замени
+   тело. Не переписывай `EncodeEnvelope`/`DecodeEnvelope` — они общие.
+4. **AddOnMain** — `RegisterCommand<Класс>` в блоке `bulkCommands`.
+   Если guard — внутри `#if`.
+5. **Проверь баланс `#if`/`#endif`** во всех трёх файлах. Ошибка
+   препроцессора («#endif without #if») в CI часто выглядит как
+   «missing #endif», но реальная причина — несогласованный guard
+   между файлами.
+6. **Пуш в fresh**, дождаться CI (см. §2a — `Run workflow`, не
+   `Re-run jobs`). Если упало — читать лог построчно, не гадать.
+7. **Живой тест** — установить .apx, прогнать через `BulkConnection`
+   (см. §2a, §4e).
+
+### Что НЕ делать
+
+  • **Не вырезать команду целиком при C4996.** Сначала попробуй
+    pragma вокруг вызова. Команда работает — оставь её.
+  • **Не отключать C4996 глобально** через `target_compile_options`.
+    Локальный pragma — единственный правильный путь.
+  • **Не использовать `head.type.typeID`** — только `GetElemTypeId`.
+  • **Не плодить `#ifdef ServerMainVers_*` в командах.** Все хелперы —
+    в `MigrationHelper.hpp`.
+  • **Не забывать `(void) param;` в stub-ветке.** MSVC в C4100 указывает
+    на сигнатуру, а не на место `(void)`. Правило: любой параметр,
+    использование которого условно через `#if`, глушить `(void)` в
+    той ветке, где он не используется. См. §4f про TAPIR_AC26_ONLY.
+
 ---
 
 ## 5. Известные грабли
