@@ -7466,7 +7466,10 @@ GS::ObjectState BulkSetIFCPropertiesCommand::Execute (
                 continue;
             }
 
+#pragma warning(push)
+#pragma warning(disable: 4996)
             const GSErrCode e = ACAPI_Element_SetIFCProperty (guid, prop);
+#pragma warning(pop)
             if (e == NoError) {
                 rec["ok"] = true;
                 ++appliedCount;
