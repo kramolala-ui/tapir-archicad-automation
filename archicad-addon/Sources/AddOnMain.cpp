@@ -1488,7 +1488,7 @@ GSErrCode Initialize (void)
         );
         err |= RegisterCommand<BulkCreatePropertyDefinitionsCommand> (
             bulkCommands, "0.1.0",
-            "Bulk-create user property definitions (project-wide). Input payload: {definitions: [{name, description?, group_name?, value_type: 'real'|'int'|'string'|'bool'|'guid', measure_type?: 'default'|'length'|'area'|'volume'|'angle', can_value_be_editable?, default_value?}]}. Groups are created/reused by name. Output payload: {created: [{index, guid, name, group_guid, error}], created_count, errors_count}. One undo barrier for the whole batch."
+            "Bulk-create user property definitions (project-wide). Input payload: {definitions: [{name, description?, group_name?, value_type: 'real'|'int'|'string'|'bool'|'guid', measure_type?: 'default'|'length'|'area'|'volume'|'angle', collection_type?: 'single'|'single_enum'|'multi_enum', possible_enum_values?: [{key, display}] (обязателен для enum), can_value_be_editable?, default_value?, has_expression?, property_expressions?: [str], availability?: [item-guid]}]}. Groups are created/reused by name. Output payload: {created: [{index, guid, name, group_guid, error}], created_count, errors_count}. One undo barrier for the whole batch."
         );
         err |= RegisterCommand<BulkDeletePropertyDefinitionsCommand> (
             bulkCommands, "0.1.0",
