@@ -1504,6 +1504,7 @@ GSErrCode Initialize (void)
             bulkCommands, "0.1.0",
             "Bulk remove IFC properties from elements. Input payload: {removals: [{element_guid, property_set_name, property_name}]}. Output payload: {removed: [{element_guid, property_set_name, property_name, ok, error}], removed_count, errors_count}. One undo barrier for the whole batch."
         );
+        #endif  // TAPIR_HAS_EXTENDED_BULK
         AddCommandGroup (bulkCommands);
     }
 
