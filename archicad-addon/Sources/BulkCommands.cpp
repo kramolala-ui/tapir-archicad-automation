@@ -7148,6 +7148,8 @@ GS::ObjectState BulkRemoveIFCPropertiesCommand::Execute (
     return response;
 }
 
+#endif  // TAPIR_HAS_EXTENDED_BULK
+
 BulkSetElementDataCommand::BulkSetElementDataCommand () :
     CommandBase (CommonSchema::Used)
 {
