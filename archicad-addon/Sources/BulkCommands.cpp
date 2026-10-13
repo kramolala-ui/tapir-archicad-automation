@@ -23,6 +23,7 @@
 #include <algorithm>
 #include <cstdint>
 #include <cstddef>
+#include <cstdio>
 #include <cstring>
 #include <cmath>
 
