@@ -270,6 +270,8 @@ public:
     virtual GS::ObjectState Execute (const GS::ObjectState& parameters, GS::ProcessControl& processControl) const override;
 };
 
+#endif  // TAPIR_HAS_EXTENDED_BULK
+
 class BulkSetElementDataCommand : public CommandBase
 {
 public:
