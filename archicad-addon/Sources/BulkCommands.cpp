@@ -7656,6 +7656,189 @@ GS::ObjectState BulkRemoveIFCPropertiesCommand::Execute (
     return response;
 }
 
+#if TAPIR_HAS_PROPERTY_EXPR_CHECK
+
+// ---------------------------------------------------------------------
+//  BulkValidatePropertyDefinitionsCommand
+// ---------------------------------------------------------------------
+//
+// Валидация формул свойств через ACAPI_Goodies(APIAny_CheckPropertyExpressionStringID).
+// Не создаёт, не меняет свойства — только читает и возвращает список невалидных.
+//
+// Wire format (msgpack inside payload_b64):
+//   input:  { "guids": ["..."], ... }   или   { "all": true }
+//   output: { "checked_count": N, "with_expression": K,
+//             "valid_count": V, "invalid_count": I,
+//             "skipped_no_expression": S,
+//             "invalid": [ { guid, name, errors: [
+//                             {line_index, error_code, expression} ] } ] }
+
+BulkValidatePropertyDefinitionsCommand::BulkValidatePropertyDefinitionsCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkValidatePropertyDefinitionsCommand::GetName () const
+{
+    return "BulkValidatePropertyDefinitions";
+}
+
+GS::Optional<GS::UniString> BulkValidatePropertyDefinitionsCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkValidatePropertyDefinitionsCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64":           { "type": "string" },
+            "compression":           { "type": "string" },
+            "checked_count":         { "type": "integer" },
+            "with_expression":       { "type": "integer" },
+            "valid_count":           { "type": "integer" },
+            "invalid_count":         { "type": "integer" },
+            "skipped_no_expression": { "type": "integer" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkValidatePropertyDefinitionsCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+    if (compression.empty ()) compression = "none";
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    std::vector<std::string> wantedGuids;
+    bool all = false;
+    try {
+        nlohmann::json j = nlohmann::json::from_msgpack (raw);
+        if (j.contains ("guids")) {
+            for (const auto& s : j["guids"]) wantedGuids.push_back (s.get<std::string> ());
+        }
+        if (j.contains ("all")) all = j["all"].get<bool> ();
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+
+    // Собираем список определений для проверки
+    std::vector<API_PropertyDefinition> defs;
+    if (!wantedGuids.empty ()) {
+        for (const std::string& g : wantedGuids) {
+            API_PropertyDefinition d;
+            d.guid = APIGuidFromString (g.c_str ());
+            if (d.guid == APINULLGuid) continue;
+            if (ACAPI_Property_GetPropertyDefinition (d) == NoError) defs.push_back (d);
+        }
+    } else if (all) {
+        GS::Array<API_PropertyGroup> groups;
+        if (ACAPI_Property_GetPropertyGroups (groups) == NoError) {
+            for (const API_PropertyGroup& grp : groups) {
+                GS::Array<API_PropertyDefinition> groupDefs;
+                if (ACAPI_Property_GetPropertyDefinitions (grp.guid, groupDefs) == NoError) {
+                    for (const API_PropertyDefinition& d : groupDefs) defs.push_back (d);
+                }
+            }
+        }
+    } else {
+        return CreateErrorResponse (APIERR_BADPARS, "payload must contain 'guids' or 'all: true'");
+    }
+
+    nlohmann::ordered_json out;
+    out["checked_count"]         = static_cast<int64_t> (defs.size ());
+    out["with_expression"]       = static_cast<int64_t> (0);
+    out["valid_count"]           = static_cast<int64_t> (0);
+    out["invalid_count"]         = static_cast<int64_t> (0);
+    out["skipped_no_expression"] = static_cast<int64_t> (0);
+    out["invalid"]               = nlohmann::json::array ();
+
+    int64_t withExpr = 0, valid = 0, invalid = 0, skipped = 0;
+
+    for (const API_PropertyDefinition& def : defs) {
+        if (!def.defaultValue.hasExpression ||
+            def.defaultValue.propertyExpressions.IsEmpty ()) {
+            ++skipped;
+            continue;
+        }
+        ++withExpr;
+
+        // Склеиваем все строки формулы в одну (Archicad хранит формулу
+        // как массив фрагментов; для валидации собираем единую строку).
+        GS::UniString joined;
+        for (const GS::UniString& part : def.defaultValue.propertyExpressions) {
+            joined += part;
+        }
+
+        nlohmann::ordered_json errors = nlohmann::json::array ();
+        GS::UniString exprCopy = joined;
+        const GSErrCode err = ACAPI_Goodies (
+            APIAny_CheckPropertyExpressionStringID, &exprCopy);
+        if (err != NoError) {
+            nlohmann::ordered_json e;
+            e["error_code"] = static_cast<int64_t> (err);
+            e["expression"] = joined.ToCStr ().Get ();
+            errors.push_back (e);
+        }
+
+        if (errors.empty ()) {
+            ++valid;
+        } else {
+            ++invalid;
+            nlohmann::ordered_json rec;
+            rec["guid"]  = APIGuidToString (def.guid).ToCStr ().Get ();
+            rec["name"]  = def.name.ToCStr ().Get ();
+            rec["errors"] = errors;
+            out["invalid"].push_back (rec);
+        }
+    }
+
+    out["with_expression"]       = withExpr;
+    out["valid_count"]           = valid;
+    out["invalid_count"]         = invalid;
+    out["skipped_no_expression"] = skipped;
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 = EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64",           GS::UniString (outB64.c_str ()));
+    response.Add ("compression",           GS::UniString (outCompression.c_str ()));
+    response.Add ("checked_count",         static_cast<Int64> (out["checked_count"].get<int64_t> ()));
+    response.Add ("with_expression",       static_cast<Int64> (withExpr));
+    response.Add ("valid_count",           static_cast<Int64> (valid));
+    response.Add ("invalid_count",         static_cast<Int64> (invalid));
+    response.Add ("skipped_no_expression", static_cast<Int64> (skipped));
+    return response;
+}
+
+#endif  // TAPIR_HAS_PROPERTY_EXPR_CHECK
+
 #endif  // TAPIR_HAS_EXTENDED_BULK
 
 BulkSetElementDataCommand::BulkSetElementDataCommand () :
