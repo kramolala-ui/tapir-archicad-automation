@@ -180,6 +180,8 @@ public:
     virtual GS::ObjectState Execute (const GS::ObjectState& parameters, GS::ProcessControl& processControl) const override;
 };
 
+#if TAPIR_HAS_EXTENDED_BULK
+
 class BulkGetProjectDiffCommand : public CommandBase
 {
 public:
