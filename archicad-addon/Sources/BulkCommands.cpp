@@ -5926,6 +5926,10 @@ GS::ObjectState BulkGetProjectDiffCommand::Execute (
     return response;
 }
 
+#endif  // TAPIR_HAS_PROJECT_DIFF
+
+#if TAPIR_HAS_EXTENDED_BULK
+
 // ---------------------------------------------------------------------
 //  BulkGetProjectInfoCommand
 // ---------------------------------------------------------------------
