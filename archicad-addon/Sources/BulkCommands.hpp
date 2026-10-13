@@ -35,6 +35,16 @@
 #  define TAPIR_HAS_PROJECT_DIFF 1
 #endif
 
+// 2026-10-13: Валидация формул свойств через Goodies.
+// APIAny_CheckPropertyExpressionStringID ('CPES') есть в AC26 DevKit.
+// Для AC25 / AC27+ / AC28 / AC29 — не проверено, включаем только AC26.
+// При появлении в других версиях — расширить условие.
+#if defined(ServerMainVers_2600) && !defined(ServerMainVers_2700)
+#  define TAPIR_HAS_PROPERTY_EXPR_CHECK 1
+#else
+#  define TAPIR_HAS_PROPERTY_EXPR_CHECK 0
+#endif
+
 class CreateElementsCommandBase;
 
 // Bulk commands: бинарный транспорт (msgpack + zstd) поверх JSON-обёртки.
