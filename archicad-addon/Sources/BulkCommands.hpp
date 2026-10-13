@@ -445,6 +445,8 @@ public:
 
 #endif  // TAPIR_HAS_PROPERTY_EXPR_CHECK
 
+#if TAPIR_HAS_NAVIGATOR_API
+
 // 2026-10-13: Navigator — создание папок View Map и клонирование
 // видов ProjectMap → ViewMap. Layout/LayoutSubset — отдельная волна.
 
