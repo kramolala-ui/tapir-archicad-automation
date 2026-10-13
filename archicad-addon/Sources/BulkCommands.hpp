@@ -4,16 +4,29 @@
 
 #include <memory>
 
-// 2026-10-13: Команды 2-й/3-й волн (ProjectDiff, ProjectInfo,
-// ElementHeaders, Create/DeletePropertyDefinitions, IFCProperties)
-// используют API, отсутствующий в AC29: сборка CI падала на
-// ACAPI_ElemDifferenceGenerator_* и API_IFCProperty — identifier not
-// found. Вырезаем для 29+, оставляем для AC26/27/28. Расширится при
-// появлении рабочих API в новых версиях.
+// 2026-10-13: Version-guards для команд 2-й/3-й волн.
+//
+// TAPIR_HAS_EXTENDED_BULK = 0: AC29. Там переехали/удалены
+//   ACAPI_ElemDifferenceGenerator_*, API_IFCProperty, часть Property API.
+//   Для AC29 остаются только «классические» bulk-команды (Ping, Get/Set
+//   текстов, mesh, clone, move, rotate, delete, create, set_element_data,
+//   get_element_data).
+//
+// TAPIR_HAS_PROJECT_DIFF = 0: AC25 и AC29.
+//   В AC25 у API_ElemDifferenceGenerator_GenerateDifference 4-й аргумент
+//   — указатель (не ссылка); API_ElemDifference не содержит
+//   isEnvironmentChanged. Проще вырезать команду, чем городить
+//   версионный шим.
 #if defined(ServerMainVers_2900)
 #  define TAPIR_HAS_EXTENDED_BULK 0
 #else
 #  define TAPIR_HAS_EXTENDED_BULK 1
+#endif
+
+#if defined(ServerMainVers_2500) || defined(ServerMainVers_2900)
+#  define TAPIR_HAS_PROJECT_DIFF 0
+#else
+#  define TAPIR_HAS_PROJECT_DIFF 1
 #endif
 
 class CreateElementsCommandBase;
