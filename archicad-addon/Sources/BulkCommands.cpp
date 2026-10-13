@@ -7983,6 +7983,7 @@ GS::ObjectState BulkValidatePropertyDefinitionsCommand::Execute (
     response.Add ("with_expression",       static_cast<Int64> (withExpr));
     response.Add ("valid_count",           static_cast<Int64> (valid));
     response.Add ("invalid_count",         static_cast<Int64> (invalid));
+    response.Add ("unverifiable_count",    static_cast<Int64> (unverifiable));
     response.Add ("skipped_no_expression", static_cast<Int64> (skipped));
     return response;
 }
