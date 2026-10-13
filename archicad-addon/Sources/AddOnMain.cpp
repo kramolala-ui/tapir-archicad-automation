@@ -1471,6 +1471,10 @@ GSErrCode Initialize (void)
             bulkCommands, "0.1.0",
             "Bulk-create Stair elements. Input: {stairsData: [...]} - same per-item shape as CreateStairs. Output: {per_source, created_guids, created_count, errors_count}."
         );
+        err |= RegisterCommand<BulkGetProjectDiffCommand> (
+            bulkCommands, "0.1.0",
+            "(experimental) Compute project diff vs. a saved state file. Uses ACAPI_ElemDifferenceGenerator_GetState + GenerateDifference (API 23+). Input payload: {state_path: '<path to state file>', diff_type?: 'modificationStamp'|'3dModel'|'context' (default: modificationStamp), force_reset?: bool=false}. First call with no state file returns first_run=true and saves the current state; subsequent calls return newElements/modifiedElements/deletedElements between saved and current. Output payload: {first_run, newElements, modifiedElements, deletedElements, isEnvironmentChanged, total_new, total_modified, total_deleted, state_path, diff_type, error}."
+        );
         AddCommandGroup (bulkCommands);
     }
 
