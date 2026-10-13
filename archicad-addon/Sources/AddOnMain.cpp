@@ -1512,6 +1512,7 @@ GSErrCode Initialize (void)
             bulkCommands, "0.1.0",
             "Read all property groups. Input payload: {} (empty). Output payload: {groups: [{guid, name, description, group_type}], count}."
         );
+        #if TAPIR_HAS_NAVIGATOR_API
         err |= RegisterCommand<BulkCreateViewMapFolderCommand> (
             bulkCommands, "0.1.0",
             "Create a folder in the View Map (Navigator). Input payload: {name, parent_guid?, previous_sibling_guid?}. Output payload: {guid, name, error}. Uses APINavigator_NewNavigatorViewID with itemType=API_FolderNavItem."
