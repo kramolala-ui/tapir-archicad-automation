@@ -6479,10 +6479,18 @@ GS::ObjectState BulkCreatePropertyDefinitionsCommand::Execute (
                 continue;
             }
 
-            // Для enum — парсим possible_enum_values.
-            // Каждый элемент: { "key": <scalar>, "display"?: <str> }
-            // keyVariant имеет тип value_type (обычно string).
-            // displayVariant — всегда строка (что видит пользователь).
+            // Enum — парсим possible_enum_values по эталону Graphisoft
+            // (Examples/Property_Test):
+            //   • keyVariant.type = API_PropertyGuidValueType (ВСЕГДА),
+            //     guidValue генерируется через GS::Guid::Generate ()
+            //     независимо от клиентского 'key'.
+            //   • displayVariant.type = valueType (обычно string),
+            //     uniStringValue = что видит пользователь.
+            //   • nonLocalizedValue = клиентский 'key' (стабильный
+            //     технический ID, чтобы при чтении отличать варианты).
+            //   • defaultValue = keyVariant первого значения
+            //     (single_enum) или listVariant со всеми keyVariant
+            //     (multi_enum).
             GS::Array<API_SingleEnumerationVariant> enumValues;
             if (collType != API_PropertySingleCollectionType) {
                 if (!item.contains ("possible_enum_values") ||
@@ -6493,28 +6501,41 @@ GS::ObjectState BulkCreatePropertyDefinitionsCommand::Execute (
                     ++errorsCount;
                     continue;
                 }
-                bool firstValue = true;
                 for (const auto& ev : item["possible_enum_values"]) {
                     if (!ev.is_object ()) continue;
-                    API_SingleEnumerationVariant v;
-                    v.keyVariant.type = valueType;
-                    v.displayVariant.type = API_PropertyStringValueType;
 
-                    // key: scalar. Если не задан — берём display как key.
-                    if (ev.contains ("key") && !ev["key"].is_null ()) {
-                        FillVariant (v.keyVariant, valueType, ev["key"]);
-                    } else if (ev.contains ("display") && !ev["display"].is_null ()) {
-                        FillVariant (v.keyVariant, valueType, ev["display"]);
+                    const std::string keyStr     = ev.value ("key", "");
+                    const std::string displayStr = ev.value ("display", keyStr);
+                    if (keyStr.empty () && displayStr.empty ()) continue;
+
+                    // 1. keyVariant — GUID (требование ACAPI).
+                    API_SingleEnumerationVariant v;
+                    v.keyVariant.type = API_PropertyGuidValueType;
+                    GS::Guid guid;
+                    guid.Generate ();
+                    v.keyVariant.guidValue = guid;   // GS::Guid → API_Guid
+
+                    // 2. displayVariant — что видит пользователь.
+                    v.displayVariant.type = valueType;
+                    if (valueType == API_PropertyStringValueType) {
+                        v.displayVariant.uniStringValue = GS::UniString (displayStr.c_str ());
                     } else {
-                        continue;   // пустой элемент — пропускаем
+                        // Для int/real/bool display всё равно строка
+                        // (по примеру API), а в uniStringValue
+                        // кладём строковое представление.
+                        v.displayVariant.uniStringValue = GS::UniString (displayStr.c_str ());
                     }
 
-                    // display: всегда строка. Если не задан — используем key как строку.
-                    const std::string displayStr = ev.value ("display", ev.value ("key", ""));
-                    v.displayVariant.uniStringValue = GS::UniString (displayStr.c_str ());
+                    // 3. nonLocalizedValue — стабильный client-key
+                    //    для round-trip. Если клиент не передал key —
+                    //    не заполняем (GS::NoValue).
+                    if (!keyStr.empty ()) {
+                        v.nonLocalizedValue = GS::UniString (keyStr.c_str ());
+                    } else {
+                        v.nonLocalizedValue = GS::NoValue;
+                    }
 
                     enumValues.Push (v);
-                    firstValue = false;
                 }
                 if (enumValues.IsEmpty ()) {
                     rec["error"] = "possible_enum_values has no valid entries (each needs 'key' or 'display')";
