@@ -6233,6 +6233,917 @@ GS::ObjectState BulkGetElementHeadersCommand::Execute (
     return response;
 }
 
+// ---------------------------------------------------------------------
+//  BulkCreatePropertyDefinitionsCommand
+// ---------------------------------------------------------------------
+//
+// Create N user properties in the project in one Execute. Each item
+// optionally creates or reuses its property group (by name).
+//
+// Wire format:
+//   input: { "definitions": [
+//     { "name": "Теплопотери, Вт",
+//       "description": "",
+//       "group_name": "Отопление",   // create-or-reuse by name; empty → no group
+//       "value_type": "real"|"int"|"string"|"bool"|"guid",
+//       "measure_type": "default"|"length"|"area"|"volume"|"angle",
+//       "can_value_be_editable": true,
+//       "default_value": <scalar> (optional)
+//     }, ... ] }
+//   output: { "created": [{index, guid, name, group_guid, error|null}],
+//             "created_count": N, "errors_count": M }
+
+namespace {
+
+API_VariantType ParseValueType (const std::string& s)
+{
+    if (s == "int" || s == "integer") return API_PropertyIntegerValueType;
+    if (s == "real" || s == "double" || s == "float") return API_PropertyRealValueType;
+    if (s == "string") return API_PropertyStringValueType;
+    if (s == "bool" || s == "boolean") return API_PropertyBooleanValueType;
+    if (s == "guid") return API_PropertyGuidValueType;
+    return API_PropertyUndefinedValueType;
+}
+
+API_PropertyMeasureType ParseMeasureType (const std::string& s)
+{
+    if (s == "length") return API_PropertyLengthMeasureType;
+    if (s == "area")   return API_PropertyAreaMeasureType;
+    if (s == "volume") return API_PropertyVolumeMeasureType;
+    if (s == "angle")  return API_PropertyAngleMeasureType;
+    return API_PropertyDefaultMeasureType;
+}
+
+void FillVariant (API_Variant& v, API_VariantType t, const nlohmann::json& value)
+{
+    v.type = t;
+    switch (t) {
+        case API_PropertyIntegerValueType:
+            if (value.is_number_integer ()) v.intValue = value.get<int> ();
+            break;
+        case API_PropertyRealValueType:
+            if (value.is_number ()) v.doubleValue = value.get<double> ();
+            break;
+        case API_PropertyBooleanValueType:
+            if (value.is_boolean ()) v.boolValue = value.get<bool> ();
+            break;
+        case API_PropertyStringValueType:
+            if (value.is_string ()) v.uniStringValue = GS::UniString (value.get<std::string> ().c_str ());
+            break;
+        case API_PropertyGuidValueType:
+            if (value.is_string ()) v.guidValue = APIGuidFromString (value.get<std::string> ().c_str ());
+            break;
+        default: break;
+    }
+}
+
+API_Guid FindOrCreateGroupByName (const std::string& name)
+{
+    if (name.empty ()) return APINULLGuid;
+    GS::Array<API_PropertyGroup> groups;
+    if (ACAPI_Property_GetPropertyGroups (groups) == NoError) {
+        for (const API_PropertyGroup& g : groups) {
+            if (g.name == GS::UniString (name.c_str ())) {
+                return g.guid;
+            }
+        }
+    }
+    API_PropertyGroup ng;
+    ng.groupType = API_PropertyCustomGroupType;
+    ng.name      = GS::UniString (name.c_str ());
+    if (ACAPI_Property_CreatePropertyGroup (ng) == NoError) {
+        return ng.guid;
+    }
+    return APINULLGuid;
+}
+
+}  // namespace
+
+BulkCreatePropertyDefinitionsCommand::BulkCreatePropertyDefinitionsCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkCreatePropertyDefinitionsCommand::GetName () const
+{
+    return "BulkCreatePropertyDefinitions";
+}
+
+GS::Optional<GS::UniString> BulkCreatePropertyDefinitionsCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkCreatePropertyDefinitionsCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64":  { "type": "string" },
+            "compression":  { "type": "string" },
+            "created_count":{ "type": "integer" },
+            "errors_count": { "type": "integer" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkCreatePropertyDefinitionsCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+    if (compression.empty ()) compression = "none";
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    nlohmann::json j;
+    try {
+        j = nlohmann::json::from_msgpack (raw);
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+    if (!j.contains ("definitions") || !j["definitions"].is_array ()) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload must contain 'definitions' array");
+    }
+
+    nlohmann::ordered_json out;
+    out["created"]      = nlohmann::json::array ();
+    out["created_count"] = static_cast<int64_t> (0);
+    out["errors_count"]  = static_cast<int64_t> (0);
+
+    size_t createdCount = 0;
+    size_t errorsCount  = 0;
+
+    ACAPI_CallUndoableCommand ("BulkCreatePropertyDefinitions", [&] () -> GSErrCode {
+        size_t idx = 0;
+        for (const auto& item : j["definitions"]) {
+            nlohmann::ordered_json rec;
+            rec["index"] = static_cast<int64_t> (idx++);
+            rec["guid"]  = nullptr;
+            rec["name"]  = "";
+            rec["group_guid"] = nullptr;
+            rec["error"] = nullptr;
+
+            if (!item.is_object ()) {
+                rec["error"] = "definition is not an object";
+                out["created"].push_back (rec);
+                ++errorsCount;
+                continue;
+            }
+            const std::string name = item.value ("name", "");
+            rec["name"] = name;
+            if (name.empty ()) {
+                rec["error"] = "name is required";
+                out["created"].push_back (rec);
+                ++errorsCount;
+                continue;
+            }
+
+            const std::string valueTypeStr = item.value ("value_type", "string");
+            const API_VariantType valueType = ParseValueType (valueTypeStr);
+            if (valueType == API_PropertyUndefinedValueType) {
+                rec["error"] = "invalid value_type: " + valueTypeStr;
+                out["created"].push_back (rec);
+                ++errorsCount;
+                continue;
+            }
+
+            const std::string groupName = item.value ("group_name", "");
+            const API_Guid groupGuid = FindOrCreateGroupByName (groupName);
+            if (!groupName.empty () && groupGuid == APINULLGuid) {
+                rec["error"] = "failed to find or create group: " + groupName;
+                out["created"].push_back (rec);
+                ++errorsCount;
+                continue;
+            }
+            if (groupGuid != APINULLGuid) {
+                rec["group_guid"] = APIGuidToString (groupGuid).ToCStr ().Get ();
+            }
+
+            API_PropertyDefinition def;
+            def.definitionType  = API_PropertyCustomDefinitionType;
+            def.guid            = APINULLGuid;
+            def.groupGuid       = groupGuid;
+            def.name            = GS::UniString (name.c_str ());
+            def.description     = GS::UniString (item.value ("description", "").c_str ());
+            def.collectionType  = API_PropertySingleCollectionType;
+            def.valueType       = valueType;
+            def.measureType     = ParseMeasureType (item.value ("measure_type", "default"));
+            def.canValueBeEditable = item.value ("can_value_be_editable", true);
+
+            if (item.contains ("default_value") && !item["default_value"].is_null ()) {
+                API_Variant v;
+                FillVariant (v, valueType, item["default_value"]);
+                def.defaultValue.basicValue.singleVariant.variant = v;
+                def.defaultValue.basicValue.variantStatus = API_VariantStatusNormal;
+            }
+
+            const GSErrCode e = ACAPI_Property_CreatePropertyDefinition (def);
+            if (e == NoError) {
+                rec["guid"] = APIGuidToString (def.guid).ToCStr ().Get ();
+                ++createdCount;
+            } else {
+                rec["error"] = std::string ("CreatePropertyDefinition failed: ") +
+                               std::to_string (static_cast<long long> (e));
+                ++errorsCount;
+            }
+            out["created"].push_back (rec);
+        }
+        return NoError;
+    });
+
+    out["created_count"] = static_cast<int64_t> (createdCount);
+    out["errors_count"]  = static_cast<int64_t> (errorsCount);
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 = EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64",   GS::UniString (outB64.c_str ()));
+    response.Add ("compression",   GS::UniString (outCompression.c_str ()));
+    response.Add ("created_count", static_cast<Int64> (createdCount));
+    response.Add ("errors_count",  static_cast<Int64> (errorsCount));
+    return response;
+}
+
+// ---------------------------------------------------------------------
+//  BulkDeletePropertyDefinitionsCommand
+// ---------------------------------------------------------------------
+//
+// Wire format:
+//   input:  { "guids": ["prop-guid", ...] }
+//   output: { "deleted": [{guid, ok, error|null}],
+//             "deleted_count": N, "errors_count": M }
+
+BulkDeletePropertyDefinitionsCommand::BulkDeletePropertyDefinitionsCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkDeletePropertyDefinitionsCommand::GetName () const
+{
+    return "BulkDeletePropertyDefinitions";
+}
+
+GS::Optional<GS::UniString> BulkDeletePropertyDefinitionsCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkDeletePropertyDefinitionsCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64":   { "type": "string" },
+            "compression":   { "type": "string" },
+            "deleted_count": { "type": "integer" },
+            "errors_count":  { "type": "integer" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkDeletePropertyDefinitionsCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+    if (compression.empty ()) compression = "none";
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    std::vector<std::string> guids;
+    try {
+        nlohmann::json j = nlohmann::json::from_msgpack (raw);
+        if (!j.contains ("guids") || !j["guids"].is_array ()) {
+            return CreateErrorResponse (APIERR_BADPARS, "payload must contain 'guids' array");
+        }
+        for (const auto& s : j["guids"]) guids.push_back (s.get<std::string> ());
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+
+    nlohmann::ordered_json out;
+    out["deleted"]      = nlohmann::json::array ();
+    out["deleted_count"] = static_cast<int64_t> (0);
+    out["errors_count"]  = static_cast<int64_t> (0);
+
+    size_t deletedCount = 0;
+    size_t errorsCount  = 0;
+
+    ACAPI_CallUndoableCommand ("BulkDeletePropertyDefinitions", [&] () -> GSErrCode {
+        for (const std::string& g : guids) {
+            nlohmann::ordered_json rec;
+            rec["guid"]  = g;
+            rec["ok"]    = false;
+            rec["error"] = nullptr;
+            API_Guid guid = APIGuidFromString (g.c_str ());
+            if (guid == APINULLGuid) {
+                rec["error"] = "invalid guid";
+                out["deleted"].push_back (rec);
+                ++errorsCount;
+                continue;
+            }
+            const GSErrCode e = ACAPI_Property_DeletePropertyDefinition (guid);
+            if (e == NoError) {
+                rec["ok"] = true;
+                ++deletedCount;
+            } else {
+                rec["error"] = std::string ("DeletePropertyDefinition failed: ") +
+                               std::to_string (static_cast<long long> (e));
+                ++errorsCount;
+            }
+            out["deleted"].push_back (rec);
+        }
+        return NoError;
+    });
+
+    out["deleted_count"] = static_cast<int64_t> (deletedCount);
+    out["errors_count"]  = static_cast<int64_t> (errorsCount);
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 = EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64",   GS::UniString (outB64.c_str ()));
+    response.Add ("compression",   GS::UniString (outCompression.c_str ()));
+    response.Add ("deleted_count", static_cast<Int64> (deletedCount));
+    response.Add ("errors_count",  static_cast<Int64> (errorsCount));
+    return response;
+}
+
+// ---------------------------------------------------------------------
+//  IFC Properties: helpers
+// ---------------------------------------------------------------------
+
+namespace {
+
+nlohmann::ordered_json IFCAnyValueToJson (const API_IFCPropertyAnyValue& v)
+{
+    nlohmann::ordered_json out;
+    switch (v.primitiveType) {
+        case API_IFCPropertyAnyValueIntegerType:
+            out = v.intValue; break;
+        case API_IFCPropertyAnyValueRealType:
+            out = v.doubleValue; break;
+        case API_IFCPropertyAnyValueBooleanType:
+        case API_IFCPropertyAnyValueLogicalType:
+            out = v.boolValue; break;
+        case API_IFCPropertyAnyValueStringType:
+            out = v.stringValue.ToCStr ().Get (); break;
+    }
+    return out;
+}
+
+const char* IFCPrimitiveTypeName (API_IFCPropertyValuePrimitiveType t)
+{
+    switch (t) {
+        case API_IFCPropertyAnyValueIntegerType: return "integer";
+        case API_IFCPropertyAnyValueRealType:    return "real";
+        case API_IFCPropertyAnyValueBooleanType: return "boolean";
+        case API_IFCPropertyAnyValueLogicalType: return "logical";
+        case API_IFCPropertyAnyValueStringType:  return "string";
+    }
+    return "unknown";
+}
+
+// Fill API_IFCProperty from a JSON item {property_set_name, property_name,
+// value, value_type?, primitive_type?}. Produces singleValue form.
+bool BuildIFCPropertyFromJson (const nlohmann::json& item, API_IFCProperty& out)
+{
+    if (!item.is_object ()) return false;
+    const std::string pset = item.value ("property_set_name", "");
+    const std::string name = item.value ("property_name", "");
+    if (pset.empty () || name.empty ()) return false;
+
+    out.head.propertySetName   = GS::UniString (pset.c_str ());
+    out.head.propertyName      = GS::UniString (name.c_str ());
+    out.head.propertyDescription = GS::UniString (item.value ("property_description", "").c_str ());
+    out.head.propertyType      = API_IFCPropertySingleValueType;
+    out.head.readOnly          = false;
+
+    if (!item.contains ("value")) return true;  // for Remove: value not needed
+
+    const std::string primStr = item.value ("primitive_type", "");
+    API_IFCPropertyValuePrimitiveType prim = API_IFCPropertyAnyValueStringType;
+    if (primStr == "integer" || primStr == "int") prim = API_IFCPropertyAnyValueIntegerType;
+    else if (primStr == "real" || primStr == "double") prim = API_IFCPropertyAnyValueRealType;
+    else if (primStr == "boolean" || primStr == "bool") prim = API_IFCPropertyAnyValueBooleanType;
+    else if (primStr == "logical") prim = API_IFCPropertyAnyValueLogicalType;
+    else if (primStr == "string") prim = API_IFCPropertyAnyValueStringType;
+    else {
+        // auto-detect by JSON type
+        const auto& v = item["value"];
+        if (v.is_number_integer ()) prim = API_IFCPropertyAnyValueIntegerType;
+        else if (v.is_number_float ()) prim = API_IFCPropertyAnyValueRealType;
+        else if (v.is_boolean ()) prim = API_IFCPropertyAnyValueBooleanType;
+        else prim = API_IFCPropertyAnyValueStringType;
+    }
+
+    API_IFCPropertyAnyValue any;
+    any.primitiveType = prim;
+    const auto& v = item["value"];
+    switch (prim) {
+        case API_IFCPropertyAnyValueIntegerType:
+            any.intValue = v.is_number_integer () ? v.get<Int64> () : 0;
+            break;
+        case API_IFCPropertyAnyValueRealType:
+            any.doubleValue = v.is_number () ? v.get<double> () : 0.0;
+            break;
+        case API_IFCPropertyAnyValueBooleanType:
+        case API_IFCPropertyAnyValueLogicalType:
+            any.boolValue = v.is_boolean () ? v.get<bool> () : false;
+            break;
+        case API_IFCPropertyAnyValueStringType:
+            any.stringValue = GS::UniString (v.is_string () ? v.get<std::string> ().c_str () : "");
+            break;
+    }
+
+    API_IFCPropertyValue val;
+    val.value = any;
+    val.valueType = GS::UniString (item.value ("value_type", "IfcLabel").c_str ());
+
+    out.singleValue.nominalValue = val;
+    return true;
+}
+
+}  // namespace
+
+// ---------------------------------------------------------------------
+//  BulkGetIFCPropertiesCommand
+// ---------------------------------------------------------------------
+//
+// Wire format:
+//   input:  { "elements": ["guid", ...] }
+//   output: { "rows": [
+//     { "elementId": "guid",
+//       "properties": [
+//         { "propertySetName", "propertyName", "propertyDescription",
+//           "propertyType": "single|bounded|list|enumerated|table",
+//           "readOnly": bool,
+//           "value": <scalar>,
+//           "valueType": "IfcLabel"|"IfcReal"|...,
+//           "primitiveType": "string"|"integer"|...
+//         }, ...],
+//       "error": null } ] }
+
+BulkGetIFCPropertiesCommand::BulkGetIFCPropertiesCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkGetIFCPropertiesCommand::GetName () const
+{
+    return "BulkGetIFCProperties";
+}
+
+GS::Optional<GS::UniString> BulkGetIFCPropertiesCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkGetIFCPropertiesCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64":    { "type": "string" },
+            "compression":    { "type": "string" },
+            "elements_count": { "type": "integer" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkGetIFCPropertiesCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+    if (compression.empty ()) compression = "none";
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    std::vector<std::string> elemGuids;
+    try {
+        nlohmann::json j = nlohmann::json::from_msgpack (raw);
+        if (!j.contains ("elements") || !j["elements"].is_array ()) {
+            return CreateErrorResponse (APIERR_BADPARS, "payload must contain 'elements' array");
+        }
+        for (const auto& s : j["elements"]) elemGuids.push_back (s.get<std::string> ());
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+
+    nlohmann::ordered_json out;
+    out["rows"] = nlohmann::json::array ();
+
+    for (const std::string& g : elemGuids) {
+        nlohmann::ordered_json row;
+        row["elementId"]  = g;
+        row["properties"] = nlohmann::json::array ();
+        row["error"]      = nullptr;
+
+        API_Guid guid = APIGuidFromString (g.c_str ());
+        if (guid == APINULLGuid) {
+            row["error"] = "invalid guid";
+            out["rows"].push_back (row);
+            continue;
+        }
+
+        GS::Array<API_IFCProperty> props;
+        const GSErrCode e = ACAPI_Element_GetIFCProperties (guid, &props);
+        if (e != NoError) {
+            row["error"] = std::string ("GetIFCProperties failed: ") +
+                           std::to_string (static_cast<long long> (e));
+            out["rows"].push_back (row);
+            continue;
+        }
+
+        for (const API_IFCProperty& p : props) {
+            nlohmann::ordered_json pj;
+            pj["propertySetName"]       = p.head.propertySetName.ToCStr ().Get ();
+            pj["propertyName"]          = p.head.propertyName.ToCStr ().Get ();
+            pj["propertyDescription"]   = p.head.propertyDescription.ToCStr ().Get ();
+            pj["readOnly"]              = p.head.readOnly;
+            switch (p.head.propertyType) {
+                case API_IFCPropertySingleValueType:    pj["propertyType"] = "single"; break;
+                case API_IFCPropertyListValueType:      pj["propertyType"] = "list"; break;
+                case API_IFCPropertyBoundedValueType:   pj["propertyType"] = "bounded"; break;
+                case API_IFCPropertyEnumeratedValueType:pj["propertyType"] = "enumerated"; break;
+                case API_IFCPropertyTableValueType:     pj["propertyType"] = "table"; break;
+            }
+            if (p.head.propertyType == API_IFCPropertySingleValueType) {
+                const API_IFCPropertyValue& val = p.singleValue.nominalValue;
+                pj["value"]         = IFCAnyValueToJson (val.value);
+                pj["valueType"]     = val.valueType.ToCStr ().Get ();
+                pj["primitiveType"] = IFCPrimitiveTypeName (val.value.primitiveType);
+            }
+            row["properties"].push_back (pj);
+        }
+        out["rows"].push_back (row);
+    }
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 = EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64",    GS::UniString (outB64.c_str ()));
+    response.Add ("compression",    GS::UniString (outCompression.c_str ()));
+    response.Add ("elements_count", static_cast<Int64> (elemGuids.size ()));
+    return response;
+}
+
+// ---------------------------------------------------------------------
+//  BulkSetIFCPropertiesCommand
+// ---------------------------------------------------------------------
+//
+// Wire format:
+//   input:  { "updates": [
+//     { "element_guid", "property_set_name", "property_name",
+//       "value", "value_type"?="IfcLabel", "primitive_type"?, "property_description"? }
+//   ] }
+//   output: { "applied": [{element_guid, property_set_name, property_name, ok, error|null}],
+//             "applied_count": N, "errors_count": M }
+
+BulkSetIFCPropertiesCommand::BulkSetIFCPropertiesCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkSetIFCPropertiesCommand::GetName () const
+{
+    return "BulkSetIFCProperties";
+}
+
+GS::Optional<GS::UniString> BulkSetIFCPropertiesCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkSetIFCPropertiesCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64":   { "type": "string" },
+            "compression":   { "type": "string" },
+            "applied_count": { "type": "integer" },
+            "errors_count":  { "type": "integer" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkSetIFCPropertiesCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+    if (compression.empty ()) compression = "none";
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    nlohmann::json j;
+    try {
+        j = nlohmann::json::from_msgpack (raw);
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+    if (!j.contains ("updates") || !j["updates"].is_array ()) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload must contain 'updates' array");
+    }
+
+    nlohmann::ordered_json out;
+    out["applied"]      = nlohmann::json::array ();
+    out["applied_count"] = static_cast<int64_t> (0);
+    out["errors_count"]  = static_cast<int64_t> (0);
+
+    size_t appliedCount = 0;
+    size_t errorsCount  = 0;
+
+    ACAPI_CallUndoableCommand ("BulkSetIFCProperties", [&] () -> GSErrCode {
+        for (const auto& item : j["updates"]) {
+            nlohmann::ordered_json rec;
+            rec["element_guid"]      = item.value ("element_guid", "");
+            rec["property_set_name"] = item.value ("property_set_name", "");
+            rec["property_name"]     = item.value ("property_name", "");
+            rec["ok"]    = false;
+            rec["error"] = nullptr;
+
+            const std::string guidStr = rec["element_guid"].get<std::string> ();
+            const API_Guid guid = APIGuidFromString (guidStr.c_str ());
+            if (guid == APINULLGuid) {
+                rec["error"] = "invalid element_guid";
+                out["applied"].push_back (rec);
+                ++errorsCount;
+                continue;
+            }
+
+            API_IFCProperty prop;
+            if (!BuildIFCPropertyFromJson (item, prop)) {
+                rec["error"] = "invalid property (property_set_name and property_name required)";
+                out["applied"].push_back (rec);
+                ++errorsCount;
+                continue;
+            }
+
+            const GSErrCode e = ACAPI_Element_SetIFCProperty (guid, prop);
+            if (e == NoError) {
+                rec["ok"] = true;
+                ++appliedCount;
+            } else {
+                rec["error"] = std::string ("SetIFCProperty failed: ") +
+                               std::to_string (static_cast<long long> (e));
+                ++errorsCount;
+            }
+            out["applied"].push_back (rec);
+        }
+        return NoError;
+    });
+
+    out["applied_count"] = static_cast<int64_t> (appliedCount);
+    out["errors_count"]  = static_cast<int64_t> (errorsCount);
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 = EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64",   GS::UniString (outB64.c_str ()));
+    response.Add ("compression",   GS::UniString (outCompression.c_str ()));
+    response.Add ("applied_count", static_cast<Int64> (appliedCount));
+    response.Add ("errors_count",  static_cast<Int64> (errorsCount));
+    return response;
+}
+
+// ---------------------------------------------------------------------
+//  BulkRemoveIFCPropertiesCommand
+// ---------------------------------------------------------------------
+//
+// Wire format:
+//   input:  { "removals": [
+//     { "element_guid", "property_set_name", "property_name" }
+//   ] }
+//   output: { "removed": [{element_guid, property_set_name, property_name, ok, error|null}],
+//             "removed_count": N, "errors_count": M }
+
+BulkRemoveIFCPropertiesCommand::BulkRemoveIFCPropertiesCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkRemoveIFCPropertiesCommand::GetName () const
+{
+    return "BulkRemoveIFCProperties";
+}
+
+GS::Optional<GS::UniString> BulkRemoveIFCPropertiesCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkRemoveIFCPropertiesCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64":   { "type": "string" },
+            "compression":   { "type": "string" },
+            "removed_count": { "type": "integer" },
+            "errors_count":  { "type": "integer" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkRemoveIFCPropertiesCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+    if (compression.empty ()) compression = "none";
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    nlohmann::json j;
+    try {
+        j = nlohmann::json::from_msgpack (raw);
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+    if (!j.contains ("removals") || !j["removals"].is_array ()) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload must contain 'removals' array");
+    }
+
+    nlohmann::ordered_json out;
+    out["removed"]      = nlohmann::json::array ();
+    out["removed_count"] = static_cast<int64_t> (0);
+    out["errors_count"]  = static_cast<int64_t> (0);
+
+    size_t removedCount = 0;
+    size_t errorsCount  = 0;
+
+    ACAPI_CallUndoableCommand ("BulkRemoveIFCProperties", [&] () -> GSErrCode {
+        for (const auto& item : j["removals"]) {
+            nlohmann::ordered_json rec;
+            rec["element_guid"]      = item.value ("element_guid", "");
+            rec["property_set_name"] = item.value ("property_set_name", "");
+            rec["property_name"]     = item.value ("property_name", "");
+            rec["ok"]    = false;
+            rec["error"] = nullptr;
+
+            const std::string guidStr = rec["element_guid"].get<std::string> ();
+            const API_Guid guid = APIGuidFromString (guidStr.c_str ());
+            if (guid == APINULLGuid) {
+                rec["error"] = "invalid element_guid";
+                out["removed"].push_back (rec);
+                ++errorsCount;
+                continue;
+            }
+
+            API_IFCProperty prop;
+            if (!BuildIFCPropertyFromJson (item, prop)) {
+                rec["error"] = "invalid property (property_set_name and property_name required)";
+                out["removed"].push_back (rec);
+                ++errorsCount;
+                continue;
+            }
+
+            const GSErrCode e = ACAPI_Element_RemoveIFCProperty (guid, prop);
+            if (e == NoError) {
+                rec["ok"] = true;
+                ++removedCount;
+            } else {
+                rec["error"] = std::string ("RemoveIFCProperty failed: ") +
+                               std::to_string (static_cast<long long> (e));
+                ++errorsCount;
+            }
+            out["removed"].push_back (rec);
+        }
+        return NoError;
+    });
+
+    out["removed_count"] = static_cast<int64_t> (removedCount);
+    out["errors_count"]  = static_cast<int64_t> (errorsCount);
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 = EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64",   GS::UniString (outB64.c_str ()));
+    response.Add ("compression",   GS::UniString (outCompression.c_str ()));
+    response.Add ("removed_count", static_cast<Int64> (removedCount));
+    response.Add ("errors_count",  static_cast<Int64> (errorsCount));
+    return response;
+}
+
 BulkSetElementDataCommand::BulkSetElementDataCommand () :
     CommandBase (CommonSchema::Used)
 {
