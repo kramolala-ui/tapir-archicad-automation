@@ -1492,6 +1492,14 @@ GSErrCode Initialize (void)
             bulkCommands, "0.1.0",
             "Bulk-delete user property definitions (project-wide, removes all values too). Input payload: {guids: [prop-guid, ...]}. Output payload: {deleted: [{guid, ok, error}], deleted_count, errors_count}. One undo barrier for the whole batch."
         );
+        err |= RegisterCommand<BulkGetPropertyDefinitionsCommand> (
+            bulkCommands, "0.1.0",
+            "Read property definitions. Input payload: {guids: [prop-guid]?} | {group_guid: 'g'}? | {all: true}?. Output payload: {definitions: [{guid, group_guid, name, description, definition_type, collection_type, value_type, measure_type, can_value_be_editable, has_expression, property_expressions: [...], default_value?, availability: [class-guid, ...], possible_enum_values?}], count}. Возвращает формулы в формате ###Property:<guid>###."
+        );
+        err |= RegisterCommand<BulkChangePropertyDefinitionsCommand> (
+            bulkCommands, "0.1.0",
+            "Update property definitions in place. Input payload: {updates: [{guid, name?, description?, value_type?, measure_type?, can_value_be_editable?, has_expression?, property_expressions?: [str], clear_expression?: bool, availability?: [class-guid], clear_availability?: bool, default_value?}]}. Читает текущее определение перед изменением — незаданные поля сохраняются. Output payload: {updated: [{guid, ok, error}], updated_count, errors_count}. One undo barrier for the whole batch."
+        );
         err |= RegisterCommand<BulkGetIFCPropertiesCommand> (
             bulkCommands, "0.1.0",
             "Read IFC properties of many elements. Input payload: {elements: [guids]}. Output payload: {rows: [{elementId, properties: [{propertySetName, propertyName, propertyDescription, propertyType: 'single'|'bounded'|'list'|'enumerated'|'table', readOnly, value, valueType, primitiveType}], error}]}. Only single-value properties carry a value; other IFC property types are listed without a value for now."
