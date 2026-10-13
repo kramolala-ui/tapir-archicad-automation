@@ -505,6 +505,8 @@ public:
     virtual GS::ObjectState Execute (const GS::ObjectState& parameters, GS::ProcessControl& processControl) const override;
 };
 
+#endif  // TAPIR_HAS_NAVIGATOR_API
+
 class BulkGetIFCPropertiesCommand : public CommandBase
 {
 public:
