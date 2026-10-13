@@ -998,8 +998,8 @@ API Archicad меняется между версиями. Проект соби
 
 ### Два guard'а
 
-    TAPIR_HAS_PROJECT_DIFF — 0 для AC25 и AC29, 1 для AC26/27/28.
-    TAPIR_HAS_EXTENDED_BULK — 0 для AC29, 1 для AC25/26/27/28.
+    TAPIR_HAS_PROJECT_DIFF — 0 для AC25, AC26, AC29; 1 для AC27/28.
+    TAPIR_HAS_EXTENDED_BULK — 0 для AC29; 1 для AC25/26/27/28.
 
 Оба — в начале `archicad-addon/Sources/BulkCommands.hpp`:
 
