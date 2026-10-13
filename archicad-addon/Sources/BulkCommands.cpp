@@ -6564,16 +6564,17 @@ GS::ObjectState BulkCreatePropertyDefinitionsCommand::Execute (
             //   • multi_enum — default = listVariant со всеми keyVariant.
             if (collType == API_PropertySingleChoiceEnumerationCollectionType
                 && !enumValues.IsEmpty ()) {
+                // По эталону Property_Test.cpp:269 — без явного
+                // variantStatus, просто копия keyVariant.
                 def.defaultValue.basicValue.singleVariant.variant =
                     enumValues[0].keyVariant;
-                def.defaultValue.basicValue.variantStatus = API_VariantStatusNormal;
             } else if (collType == API_PropertyMultipleChoiceEnumerationCollectionType
                        && !enumValues.IsEmpty ()) {
+                // Multi-choice — listVariant со всеми keyVariant.
                 for (const auto& v : enumValues) {
                     def.defaultValue.basicValue.listVariant.variants.Push (
                         v.keyVariant);
                 }
-                def.defaultValue.basicValue.variantStatus = API_VariantStatusNormal;
             } else {
                 // Обычное single-свойство.
                 // Всегда инициализируем type, иначе expression-валидация
