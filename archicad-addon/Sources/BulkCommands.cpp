@@ -7943,12 +7943,26 @@ GS::ObjectState BulkValidatePropertyDefinitionsCommand::Execute (
         if (errors.empty ()) {
             ++valid;
         } else {
-            ++invalid;
-            nlohmann::ordered_json rec;
-            rec["guid"]  = APIGuidToString (def.guid).ToCStr ().Get ();
-            rec["name"]  = def.name.ToCStr ().Get ();
-            rec["errors"] = errors;
-            out["invalid"].push_back (rec);
+            // 2026-10-13: если все ошибки — unverifiable (unknown func),
+            // не считаем свойство невалидным. Формула может быть
+            // полностью рабочей в UI Archicad со сторонним аддоном.
+            bool allUnverifiable = true;
+            for (const auto& e : errors) {
+                if (e.value ("kind", "invalid") != "unverifiable") {
+                    allUnverifiable = false;
+                    break;
+                }
+            }
+            if (allUnverifiable) {
+                ++unverifiable;
+            } else {
+                ++invalid;
+                nlohmann::ordered_json rec;
+                rec["guid"]   = APIGuidToString (def.guid).ToCStr ().Get ();
+                rec["name"]   = def.name.ToCStr ().Get ();
+                rec["errors"] = errors;
+                out["invalid"].push_back (rec);
+            }
         }
     }
 
