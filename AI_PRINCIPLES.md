@@ -1992,6 +1992,15 @@ IFC x3 (Get/Set/Remove). Введены version-guards
 `warning(disable: 4996)`. `GetElemTypeId` из MigrationHelper.hpp —
 единственный способ читать тип хедера во всех версиях AC25-29.
 
+**2026-10-13 (вечер):** Приёмка на живом AC26 показала, что
+`BulkGetProjectDiff` **зависает** (HTTP timeout, Archicad перестаёт
+отвечать на все последующие запросы). Расширен guard:
+`TAPIR_HAS_PROJECT_DIFF=0` и для AC26. Восстановлено через
+Python-fallback в `BulkConnection.get_project_diff` — тот же
+контракт, реализация через `BulkGetElementHeaders` + JSON state.
+**Итог приёмки: 11/11 команд работают на AC26.** ProjectDiff
+функционально доступен, хотя C++ реализация вырезана.
+
 ---
 
 ## 10a. BulkGetElementData / BulkGetElementMesh / геометрия (2026-10-06)
