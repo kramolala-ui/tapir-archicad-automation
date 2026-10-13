@@ -397,6 +397,21 @@ public:
     virtual GS::ObjectState Execute (const GS::ObjectState& parameters, GS::ProcessControl& processControl) const override;
 };
 
+#if TAPIR_HAS_PROPERTY_EXPR_CHECK
+
+class BulkValidatePropertyDefinitionsCommand : public CommandBase
+{
+public:
+    BulkValidatePropertyDefinitionsCommand ();
+
+    virtual GS::String GetName () const override;
+    virtual GS::Optional<GS::UniString> GetInputParametersSchema () const override;
+    virtual GS::Optional<GS::UniString> GetRawResponseSchema () const override;
+    virtual GS::ObjectState Execute (const GS::ObjectState& parameters, GS::ProcessControl& processControl) const override;
+};
+
+#endif  // TAPIR_HAS_PROPERTY_EXPR_CHECK
+
 class BulkGetIFCPropertiesCommand : public CommandBase
 {
 public:
