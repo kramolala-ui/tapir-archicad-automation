@@ -6491,6 +6491,465 @@ GS::ObjectState BulkCreatePropertyDefinitionsCommand::Execute (
 }
 
 // ---------------------------------------------------------------------
+//  PropertyDefinition ↔ JSON
+// ---------------------------------------------------------------------
+
+namespace {
+
+const char* DefinitionTypeName (API_PropertyDefinitionType t)
+{
+    switch (t) {
+        case API_PropertyStaticBuiltInDefinitionType:  return "static_builtin";
+        case API_PropertyDynamicBuiltInDefinitionType: return "dynamic_builtin";
+        case API_PropertyCustomDefinitionType:         return "custom";
+    }
+    return "unknown";
+}
+
+const char* CollectionTypeName (API_PropertyCollectionType t)
+{
+    switch (t) {
+        case API_PropertyUndefinedCollectionType:                 return "undefined";
+        case API_PropertySingleCollectionType:                    return "single";
+        case API_PropertyListCollectionType:                      return "list";
+        case API_PropertySingleChoiceEnumerationCollectionType:   return "single_enum";
+        case API_PropertyMultipleChoiceEnumerationCollectionType: return "multi_enum";
+    }
+    return "unknown";
+}
+
+const char* MeasureTypeName (API_PropertyMeasureType t)
+{
+    switch (t) {
+        case API_PropertyUndefinedMeasureType: return "undefined";
+        case API_PropertyDefaultMeasureType:   return "default";
+        case API_PropertyLengthMeasureType:    return "length";
+        case API_PropertyAreaMeasureType:      return "area";
+        case API_PropertyVolumeMeasureType:    return "volume";
+        case API_PropertyAngleMeasureType:     return "angle";
+    }
+    return "unknown";
+}
+
+const char* ValueTypeName (API_VariantType t)
+{
+    switch (t) {
+        case API_PropertyUndefinedValueType: return "undefined";
+        case API_PropertyIntegerValueType:   return "int";
+        case API_PropertyRealValueType:      return "real";
+        case API_PropertyStringValueType:    return "string";
+        case API_PropertyBooleanValueType:   return "bool";
+        case API_PropertyGuidValueType:      return "guid";
+    }
+    return "unknown";
+}
+
+nlohmann::ordered_json VariantToJson (const API_Variant& v)
+{
+    switch (v.type) {
+        case API_PropertyIntegerValueType: return v.intValue;
+        case API_PropertyRealValueType:    return v.doubleValue;
+        case API_PropertyBooleanValueType: return v.boolValue;
+        case API_PropertyStringValueType:  return v.uniStringValue.ToCStr ().Get ();
+        case API_PropertyGuidValueType:    return APIGuidToString (v.guidValue).ToCStr ().Get ();
+        default:                           return nullptr;
+    }
+}
+
+nlohmann::ordered_json DefinitionToJson (const API_PropertyDefinition& def)
+{
+    nlohmann::ordered_json j;
+    j["guid"]                  = APIGuidToString (def.guid).ToCStr ().Get ();
+    j["group_guid"]            = APIGuidToString (def.groupGuid).ToCStr ().Get ();
+    j["name"]                  = def.name.ToCStr ().Get ();
+    j["description"]           = def.description.ToCStr ().Get ();
+    j["definition_type"]       = DefinitionTypeName (def.definitionType);
+    j["collection_type"]       = CollectionTypeName (def.collectionType);
+    j["value_type"]            = ValueTypeName (def.valueType);
+    j["measure_type"]          = MeasureTypeName (def.measureType);
+    j["can_value_be_editable"] = def.canValueBeEditable;
+
+    // Expression
+    j["has_expression"]        = def.defaultValue.hasExpression;
+    j["property_expressions"]  = nlohmann::json::array ();
+    if (def.defaultValue.hasExpression) {
+        for (const GS::UniString& e : def.defaultValue.propertyExpressions) {
+            j["property_expressions"].push_back (e.ToCStr ().Get ());
+        }
+    }
+
+    // Default value (basicValue)
+    if (!def.defaultValue.hasExpression) {
+        const API_Variant& bv = def.defaultValue.basicValue.singleVariant.variant;
+        if (bv.type != API_PropertyUndefinedValueType) {
+            j["default_value"] = VariantToJson (bv);
+        }
+    }
+
+    // Availability
+    j["availability"] = nlohmann::json::array ();
+    for (const API_Guid& g : def.availability) {
+        j["availability"].push_back (APIGuidToString (g).ToCStr ().Get ());
+    }
+
+    // Enum values (для collection_type=*_enum)
+    if (def.collectionType == API_PropertySingleChoiceEnumerationCollectionType ||
+        def.collectionType == API_PropertyMultipleChoiceEnumerationCollectionType) {
+        j["possible_enum_values"] = nlohmann::json::array ();
+        for (const API_SingleEnumerationVariant& ev : def.possibleEnumValues) {
+            nlohmann::ordered_json ej;
+            ej["key"]     = VariantToJson (ev.keyVariant);
+            ej["display"] = VariantToJson (ev.displayVariant);
+            j["possible_enum_values"].push_back (ej);
+        }
+    }
+
+    return j;
+}
+
+}  // namespace
+
+// ---------------------------------------------------------------------
+//  BulkGetPropertyDefinitionsCommand
+// ---------------------------------------------------------------------
+//
+// Wire format:
+//   input:  { "guids": ["prop-guid", ...] }    // приоритет
+//        или { "group_guid": "group-guid" }     // все свойства группы
+//        или { "all": true }                    // все свойства проекта
+//   output: { "definitions": [{<см. DefinitionToJson>}], "count": N }
+
+BulkGetPropertyDefinitionsCommand::BulkGetPropertyDefinitionsCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkGetPropertyDefinitionsCommand::GetName () const
+{
+    return "BulkGetPropertyDefinitions";
+}
+
+GS::Optional<GS::UniString> BulkGetPropertyDefinitionsCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkGetPropertyDefinitionsCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string" },
+            "count":       { "type": "integer" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkGetPropertyDefinitionsCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+    if (compression.empty ()) compression = "none";
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    std::vector<std::string> wantedGuids;
+    std::string groupGuid;
+    bool all = false;
+    try {
+        nlohmann::json j = nlohmann::json::from_msgpack (raw);
+        if (j.contains ("guids")) {
+            for (const auto& s : j["guids"]) wantedGuids.push_back (s.get<std::string> ());
+        }
+        if (j.contains ("group_guid")) groupGuid = j["group_guid"].get<std::string> ();
+        if (j.contains ("all"))       all       = j["all"].get<bool> ();
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+
+    nlohmann::ordered_json out;
+    out["definitions"] = nlohmann::json::array ();
+
+    auto emit = [&] (const API_PropertyDefinition& def) {
+        out["definitions"].push_back (DefinitionToJson (def));
+    };
+
+    if (!wantedGuids.empty ()) {
+        for (const std::string& g : wantedGuids) {
+            API_PropertyDefinition def;
+            def.guid = APIGuidFromString (g.c_str ());
+            if (def.guid == APINULLGuid) continue;
+            if (ACAPI_Property_GetPropertyDefinition (def) == NoError) {
+                emit (def);
+            }
+        }
+    } else if (!groupGuid.empty ()) {
+        const API_Guid gguid = APIGuidFromString (groupGuid.c_str ());
+        if (gguid != APINULLGuid) {
+            GS::Array<API_PropertyDefinition> defs;
+            if (ACAPI_Property_GetPropertyDefinitions (gguid, defs) == NoError) {
+                for (const API_PropertyDefinition& d : defs) emit (d);
+            }
+        }
+    } else if (all) {
+        GS::Array<API_PropertyGroup> groups;
+        if (ACAPI_Property_GetPropertyGroups (groups) == NoError) {
+            for (const API_PropertyGroup& grp : groups) {
+                GS::Array<API_PropertyDefinition> defs;
+                if (ACAPI_Property_GetPropertyDefinitions (grp.guid, defs) == NoError) {
+                    for (const API_PropertyDefinition& d : defs) emit (d);
+                }
+            }
+        }
+    }
+
+    out["count"] = static_cast<int64_t> (out["definitions"].size ());
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 = EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64", GS::UniString (outB64.c_str ()));
+    response.Add ("compression", GS::UniString (outCompression.c_str ()));
+    response.Add ("count",       out["count"].get<int64_t> ());
+    return response;
+}
+
+// ---------------------------------------------------------------------
+//  BulkChangePropertyDefinitionsCommand
+// ---------------------------------------------------------------------
+//
+// Меняем только те поля, что заданы. При чтении текущего определения
+// сохраняются все прочие (важно: availability, defaultValue, enumValues
+// не сбрасываются случайно).
+//
+// Wire format:
+//   input: { "updates": [
+//     { "guid": str,
+//       "name": str?, "description": str?,
+//       "value_type": str?, "measure_type": str?,
+//       "can_value_be_editable": bool?,
+//       "has_expression": bool?,
+//       "property_expressions": [str, ...]?,
+//       "clear_expression": bool?,
+//       "availability": [str, ...]?,
+//       "clear_availability": bool?,
+//       "default_value": scalar?
+//     } ] }
+//   output: { "updated": [{guid, ok, error}],
+//             "updated_count": N, "errors_count": M }
+
+BulkChangePropertyDefinitionsCommand::BulkChangePropertyDefinitionsCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkChangePropertyDefinitionsCommand::GetName () const
+{
+    return "BulkChangePropertyDefinitions";
+}
+
+GS::Optional<GS::UniString> BulkChangePropertyDefinitionsCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkChangePropertyDefinitionsCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64":   { "type": "string" },
+            "compression":   { "type": "string" },
+            "updated_count": { "type": "integer" },
+            "errors_count":  { "type": "integer" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkChangePropertyDefinitionsCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+    if (compression.empty ()) compression = "none";
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    nlohmann::json j;
+    try {
+        j = nlohmann::json::from_msgpack (raw);
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+    if (!j.contains ("updates") || !j["updates"].is_array ()) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload must contain 'updates' array");
+    }
+
+    nlohmann::ordered_json out;
+    out["updated"]      = nlohmann::json::array ();
+    out["updated_count"] = static_cast<int64_t> (0);
+    out["errors_count"]  = static_cast<int64_t> (0);
+
+    size_t updatedCount = 0;
+    size_t errorsCount  = 0;
+
+    ACAPI_CallUndoableCommand ("BulkChangePropertyDefinitions", [&] () -> GSErrCode {
+        for (const auto& item : j["updates"]) {
+            nlohmann::ordered_json rec;
+            rec["guid"]  = item.value ("guid", "");
+            rec["ok"]    = false;
+            rec["error"] = nullptr;
+
+            const std::string gstr = rec["guid"].get<std::string> ();
+            const API_Guid guid = APIGuidFromString (gstr.c_str ());
+            if (guid == APINULLGuid) {
+                rec["error"] = "invalid guid";
+                out["updated"].push_back (rec);
+                ++errorsCount;
+                continue;
+            }
+
+            API_PropertyDefinition def;
+            def.guid = guid;
+            if (ACAPI_Property_GetPropertyDefinition (def) != NoError) {
+                rec["error"] = "GetPropertyDefinition failed";
+                out["updated"].push_back (rec);
+                ++errorsCount;
+                continue;
+            }
+
+            // Простые поля
+            if (item.contains ("name"))        def.name = GS::UniString (item["name"].get<std::string> ().c_str ());
+            if (item.contains ("description")) def.description = GS::UniString (item["description"].get<std::string> ().c_str ());
+            if (item.contains ("can_value_be_editable")) def.canValueBeEditable = item["can_value_be_editable"].get<bool> ();
+
+            if (item.contains ("value_type")) {
+                const API_VariantType vt = ParseValueType (item["value_type"].get<std::string> ());
+                if (vt != API_PropertyUndefinedValueType) def.valueType = vt;
+            }
+            if (item.contains ("measure_type")) {
+                def.measureType = ParseMeasureType (item["measure_type"].get<std::string> ());
+            }
+
+            // Expression
+            bool clearExpr = item.value ("clear_expression", false);
+            if (clearExpr) {
+                def.defaultValue.hasExpression = false;
+                def.defaultValue.propertyExpressions.Clear ();
+            } else {
+                if (item.contains ("has_expression")) {
+                    def.defaultValue.hasExpression = item["has_expression"].get<bool> ();
+                }
+                if (item.contains ("property_expressions")) {
+                    def.defaultValue.propertyExpressions.Clear ();
+                    for (const auto& e : item["property_expressions"]) {
+                        def.defaultValue.propertyExpressions.Push (GS::UniString (e.get<std::string> ().c_str ()));
+                    }
+                    if (!def.defaultValue.propertyExpressions.IsEmpty ()) {
+                        def.defaultValue.hasExpression = true;
+                    }
+                }
+                // Если включили has_expression, но basicValue.type пустой — инициализируем типом
+                if (def.defaultValue.hasExpression &&
+                    def.defaultValue.basicValue.singleVariant.variant.type == API_PropertyUndefinedValueType) {
+                    def.defaultValue.basicValue.singleVariant.variant.type = def.valueType;
+                }
+            }
+
+            // Availability
+            bool clearAvail = item.value ("clear_availability", false);
+            if (clearAvail) {
+                def.availability.Clear ();
+            } else if (item.contains ("availability")) {
+                def.availability.Clear ();
+                for (const auto& g : item["availability"]) {
+                    const API_Guid cg = APIGuidFromString (g.get<std::string> ().c_str ());
+                    if (cg != APINULLGuid) def.availability.Push (cg);
+                }
+            }
+
+            // Default value (basicValue)
+            if (item.contains ("default_value") && !item["default_value"].is_null () && !def.defaultValue.hasExpression) {
+                FillVariant (def.defaultValue.basicValue.singleVariant.variant, def.valueType, item["default_value"]);
+                def.defaultValue.basicValue.variantStatus = API_VariantStatusNormal;
+            }
+
+            const GSErrCode e = ACAPI_Property_ChangePropertyDefinition (def);
+            if (e == NoError) {
+                rec["ok"] = true;
+                ++updatedCount;
+            } else {
+                rec["error"] = std::string ("ChangePropertyDefinition failed: ") +
+                               std::to_string (static_cast<long long> (e));
+                ++errorsCount;
+            }
+            out["updated"].push_back (rec);
+        }
+        return NoError;
+    });
+
+    out["updated_count"] = static_cast<int64_t> (updatedCount);
+    out["errors_count"]  = static_cast<int64_t> (errorsCount);
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 = EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64",   GS::UniString (outB64.c_str ()));
+    response.Add ("compression",   GS::UniString (outCompression.c_str ()));
+    response.Add ("updated_count", static_cast<Int64> (updatedCount));
+    response.Add ("errors_count",  static_cast<Int64> (errorsCount));
+    return response;
+}
+
+// ---------------------------------------------------------------------
 //  BulkDeletePropertyDefinitionsCommand
 // ---------------------------------------------------------------------
 //
