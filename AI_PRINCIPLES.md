@@ -1023,6 +1023,19 @@ API Archicad меняется между версиями. Проект соби
 ProjectInfo / ElementHeaders / Property / IFC в AC25 есть — они под
 EXTENDED_BULK.
 
+**Про AC26 (2026-10-13 вечер).** `BulkGetProjectDiff` вырезана также
+из AC26. На живом проекте («Шаблон гидравлики IFC», 662 Object,
+3362 свойства) команда уходит в HTTP-таймаут: Tapir-тред
+блокируется в `ACAPI_ElemDifferenceGenerator_GetState` или
+`GenerateDifference`, Archicad перестаёт отвечать на **все**
+последующие запросы — ни TCP, ни Task Manager. Перезапуск Archicad —
+единственный выход. Диагностика отложена; предположительно,
+`GenerateDifference` с `diff_type='modificationStamp'` не масштабируется
+на проекты такого размера или требует активного окна 3D.
+
+Прочие 9 команд 2-й/3-й волны (ProjectInfo, ElementHeaders,
+Property x4, IFC x3) на AC26 **работают и проверены живьём**.
+
 ### Таблица сборки
 
 | Версия | PROJECT_DIFF | EXTENDED_BULK | ProjectDiff | ProjectInfo + Headers + Prop x4 + IFC x3 | Классические |
