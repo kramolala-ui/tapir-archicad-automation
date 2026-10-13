@@ -5675,6 +5675,255 @@ GSErrCode ApplyClassBatch (const API_Guid& elemGuid,
 
 }  // namespace
 
+// ---------------------------------------------------------------------
+//  BulkGetProjectDiffCommand
+// ---------------------------------------------------------------------
+//
+// Incremental diff of the current project vs. a persisted state snapshot.
+// Uses the built-in API_ElemDifferenceGenerator (API 23+):
+//
+//   1. Load prev state from a file (raw GSHandle bytes; if not present —
+//      first run, no prev).
+//   2. GetState(type, &currState) — take a snapshot of the current project.
+//   3. GenerateDifference(type, &prevState, &currState, diff) — return
+//      newElements / modifiedElements / deletedElements / isEnvironmentChanged.
+//   4. Save currState to the same file for the next call.
+//
+// Three diff strategies, per API_ElemDifferenceGeneratorTypeID:
+//   modificationStamp — modiStamp-based (fast, works in SOLO and TW)
+//   3dModel           — 3D-model-based (by geometry)
+//   context           — context-based (Teamwork-aware)
+//
+// Wire format (msgpack inside payload_b64):
+//   input:  { "state_path": "C:\\...\\<project_key>.state",
+//             "diff_type":  "modificationStamp"|"3dModel"|"context",
+//             "force_reset": false }
+//   output: { "first_run": bool,
+//             "newElements": ["guid", ...],
+//             "modifiedElements": ["guid", ...],
+//             "deletedElements": ["guid", ...],
+//             "isEnvironmentChanged": bool,
+//             "total_new": N, "total_modified": M, "total_deleted": K,
+//             "state_path": "C:\\...", "diff_type": "...", "error": null|"msg" }
+
+namespace {
+
+// Save API_ElemDifferenceGeneratorState to a file. The state is an opaque
+// GSHandle blob; save raw bytes, reconstruct via the InMemory constructor
+// on load.
+bool SaveDiffStateToFile (const API_ElemDifferenceGeneratorState& state,
+                          const std::string& path)
+{
+    if (state.stateHdl == nullptr || path.empty ()) {
+        return false;
+    }
+    const GSSize size = BMGetHandleSize (state.stateHdl);
+    if (size <= 0) {
+        return false;
+    }
+    FILE* f = std::fopen (path.c_str (), "wb");
+    if (f == nullptr) {
+        return false;
+    }
+    const void* data = *state.stateHdl;
+    const size_t written = std::fwrite (data, 1, static_cast<size_t> (size), f);
+    std::fclose (f);
+    return written == static_cast<size_t> (size);
+}
+
+bool LoadDiffStateFromFile (API_ElemDifferenceGeneratorState& outState,
+                            const std::string& path)
+{
+    if (path.empty ()) {
+        return false;
+    }
+    FILE* f = std::fopen (path.c_str (), "rb");
+    if (f == nullptr) {
+        return false;
+    }
+    std::fseek (f, 0, SEEK_END);
+    const long sz = std::ftell (f);
+    std::fseek (f, 0, SEEK_SET);
+    if (sz <= 0) {
+        std::fclose (f);
+        return false;
+    }
+    GSHandle h = BMAllocateHandle (static_cast<GSSize> (sz), ALLOCATE_CLEAR, 0);
+    if (h == nullptr) {
+        std::fclose (f);
+        return false;
+    }
+    const size_t rd = std::fread (*h, 1, static_cast<size_t> (sz), f);
+    std::fclose (f);
+    if (rd != static_cast<size_t> (sz)) {
+        BMKillHandle (&h);
+        return false;
+    }
+    // InMemory constructor copies the handle, so we can free ours after.
+    outState = API_ElemDifferenceGeneratorState (h);
+    BMKillHandle (&h);
+    return true;
+}
+
+}  // namespace
+
+
+BulkGetProjectDiffCommand::BulkGetProjectDiffCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkGetProjectDiffCommand::GetName () const
+{
+    return "BulkGetProjectDiff";
+}
+
+GS::Optional<GS::UniString> BulkGetProjectDiffCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkGetProjectDiffCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64":    { "type": "string"  },
+            "compression":    { "type": "string"  },
+            "first_run":      { "type": "boolean" },
+            "total_new":      { "type": "integer" },
+            "total_modified": { "type": "integer" },
+            "total_deleted":  { "type": "integer" },
+            "is_env_changed": { "type": "boolean" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkGetProjectDiffCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+    if (compression.empty ()) compression = "none";
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    std::string statePath;
+    std::string diffTypeStr = "modificationStamp";
+    bool forceReset = false;
+    try {
+        nlohmann::json j = nlohmann::json::from_msgpack (raw);
+        if (j.contains ("state_path"))  statePath   = j["state_path"].get<std::string> ();
+        if (j.contains ("diff_type"))   diffTypeStr = j["diff_type"].get<std::string> ();
+        if (j.contains ("force_reset")) forceReset  = j["force_reset"].get<bool> ();
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+
+    API_ElemDifferenceGeneratorTypeID diffType = APIDiff_ModificationStampBased;
+    if (diffTypeStr == "3dModel" || diffTypeStr == "3d") {
+        diffType = APIDiff_3DModelBased;
+    } else if (diffTypeStr == "context") {
+        diffType = APIDiff_ContextBased;
+    }
+
+    nlohmann::ordered_json out;
+    out["first_run"]            = false;
+    out["newElements"]          = nlohmann::json::array ();
+    out["modifiedElements"]     = nlohmann::json::array ();
+    out["deletedElements"]      = nlohmann::json::array ();
+    out["isEnvironmentChanged"] = false;
+    out["total_new"]            = static_cast<int64_t> (0);
+    out["total_modified"]       = static_cast<int64_t> (0);
+    out["total_deleted"]        = static_cast<int64_t> (0);
+    out["diff_type"]            = diffTypeStr;
+    out["state_path"]           = statePath;
+    out["error"]                = nullptr;
+
+    if (forceReset && !statePath.empty ()) {
+        std::remove (statePath.c_str ());
+    }
+
+    API_ElemDifferenceGeneratorState prevState;
+    const bool havePrev = LoadDiffStateFromFile (prevState, statePath);
+
+    API_ElemDifferenceGeneratorState currState;
+    const GSErrCode errGet = ACAPI_ElemDifferenceGenerator_GetState (diffType, &currState);
+    if (errGet != NoError) {
+        out["error"] = std::string ("GetState failed: ") +
+                       std::to_string (static_cast<long long> (errGet));
+    } else if (havePrev) {
+        API_ElemDifference diff;
+        const GSErrCode errDiff = ACAPI_ElemDifferenceGenerator_GenerateDifference (
+            diffType, &prevState, &currState, diff);
+        if (errDiff == NoError) {
+            diff.newElements.Enumerate ([&] (const API_Guid& g) {
+                out["newElements"].push_back (APIGuidToString (g).ToCStr ().Get ());
+            });
+            diff.modifiedElements.Enumerate ([&] (const API_Guid& g) {
+                out["modifiedElements"].push_back (APIGuidToString (g).ToCStr ().Get ());
+            });
+            diff.deletedElements.Enumerate ([&] (const API_Guid& g) {
+                out["deletedElements"].push_back (APIGuidToString (g).ToCStr ().Get ());
+            });
+            out["isEnvironmentChanged"] = diff.isEnvironmentChanged;
+            out["total_new"]      = static_cast<int64_t> (diff.newElements.GetSize ());
+            out["total_modified"] = static_cast<int64_t> (diff.modifiedElements.GetSize ());
+            out["total_deleted"]  = static_cast<int64_t> (diff.deletedElements.GetSize ());
+        } else {
+            out["error"] = std::string ("GenerateDifference failed: ") +
+                           std::to_string (static_cast<long long> (errDiff));
+        }
+    } else {
+        out["first_run"] = true;
+    }
+
+    // Persist current state for the next call (even on first run).
+    if (errGet == NoError && !statePath.empty ()) {
+        if (!SaveDiffStateToFile (currState, statePath)) {
+            if (out["error"].is_null ()) {
+                out["error"] = "failed to save current state to " + statePath;
+            }
+        }
+    }
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 = EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64",    GS::UniString (outB64.c_str ()));
+    response.Add ("compression",    GS::UniString (outCompression.c_str ()));
+    response.Add ("first_run",      out["first_run"].get<bool> ());
+    response.Add ("total_new",      out["total_new"].get<int64_t> ());
+    response.Add ("total_modified", out["total_modified"].get<int64_t> ());
+    response.Add ("total_deleted",  out["total_deleted"].get<int64_t> ());
+    response.Add ("is_env_changed", out["isEnvironmentChanged"].get<bool> ());
+
+    return response;
+}
+
 BulkSetElementDataCommand::BulkSetElementDataCommand () :
     CommandBase (CommonSchema::Used)
 {
