@@ -1512,6 +1512,14 @@ GSErrCode Initialize (void)
             bulkCommands, "0.1.0",
             "Read all property groups. Input payload: {} (empty). Output payload: {groups: [{guid, name, description, group_type}], count}."
         );
+        err |= RegisterCommand<BulkCreateViewMapFolderCommand> (
+            bulkCommands, "0.1.0",
+            "Create a folder in the View Map (Navigator). Input payload: {name, parent_guid?, previous_sibling_guid?}. Output payload: {guid, name, error}. Uses APINavigator_NewNavigatorViewID with itemType=API_FolderNavItem."
+        );
+        err |= RegisterCommand<BulkCloneProjectMapToViewMapCommand> (
+            bulkCommands, "0.1.0",
+            "Clone a Navigator item from Project Map to View Map (copies all view settings). Input payload: {source_guid, parent_guid}. Output payload: {created_guid, error}. Uses APINavigator_CloneProjectMapItemToViewMapID (API 24+)."
+        );
         err |= RegisterCommand<BulkChangePropertyGroupsCommand> (
             bulkCommands, "0.1.0",
             "Create / rename / delete property groups. Input payload: {updates: [{op: 'create', name, description?} | {op: 'change', guid, name?, description?} | {op: 'delete', guid}]}. Output payload: {results: [{index, op, guid?, name?, ok, error}], updated_count, errors_count}. One undo barrier for the whole batch."
