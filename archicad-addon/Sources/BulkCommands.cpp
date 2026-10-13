@@ -6528,14 +6528,14 @@ GS::ObjectState BulkCreatePropertyDefinitionsCommand::Execute (
                         v.displayVariant.uniStringValue = GS::UniString (displayStr.c_str ());
                     }
 
-                    // 3. nonLocalizedValue — стабильный client-key
-                    //    для round-trip. Если клиент не передал key —
-                    //    не заполняем (GS::NoValue).
-                    if (!keyStr.empty ()) {
-                        v.nonLocalizedValue = GS::UniString (keyStr.c_str ());
-                    } else {
-                        v.nonLocalizedValue = GS::NoValue;
-                    }
+                    // 3. nonLocalizedValue — ВСЕГДА GS::NoValue, как в
+                    //    эталоне Graphisoft Property_Test.cpp:266. Если
+                    //    заполнять непустой строкой, ACAPI отбивает
+                    //    свойство с APIERR_BADPARS (-2130313112).
+                    //    Ограничение AC26; для round-trip клиентского
+                    //    key используй displayVariant или отдельное
+                    //    свойство.
+                    v.nonLocalizedValue = GS::NoValue;
 
                     enumValues.Push (v);
                 }
