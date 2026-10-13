@@ -1938,6 +1938,15 @@ PolyData через `mesh.lines = lines_arr` (один актёр несёт tri
 и AC27+) — без default. Сборка зелёная на AC25/26/27+ в CI. Подробности —
 §10b.
 
+**2026-10-13:** Вторая и третья волны Bulk-команд: ProjectDiff,
+ProjectInfo, ElementHeaders, Property x4 (Create/Delete/Get/Change),
+IFC x3 (Get/Set/Remove). Введены version-guards
+`TAPIR_HAS_PROJECT_DIFF` (0 на AC25 и AC29) и
+`TAPIR_HAS_EXTENDED_BULK` (0 только на AC29). Расширен §4g. В AC25
+появился C4996 на deprecated IFC API — фикс через локальный pragma
+`warning(disable: 4996)`. `GetElemTypeId` из MigrationHelper.hpp —
+единственный способ читать тип хедера во всех версиях AC25-29.
+
 ---
 
 ## 10a. BulkGetElementData / BulkGetElementMesh / геометрия (2026-10-06)
