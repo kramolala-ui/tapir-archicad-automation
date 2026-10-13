@@ -8295,6 +8295,411 @@ GS::ObjectState BulkChangePropertyGroupsCommand::Execute (
     return response;
 }
 
+// ---------------------------------------------------------------------
+//  BulkGetNavigatorItemsCommand
+// ---------------------------------------------------------------------
+//
+// Читает дерево Navigator (Project Map / View Map / Layout Book / etc.).
+// Если parent_guid не задан — возвращает корневые items для map_id.
+// Иначе — children указанного item'а.
+//
+// Wire format (msgpack inside payload_b64):
+//   input:  { "map_id": int,              // 1=ProjectMap, 2=PublicViewMap, 4=LayoutMap
+//             "parent_guid"?: str }
+//   output: { "items": [{guid, name, item_type, item_type_name,
+//                        map_id, source_guid, db_type}], "count": N }
+
+namespace {
+
+const char* NavItemTypeName (API_NavigatorItemTypeID t)
+{
+    switch (t) {
+        case API_ProjectNavItem:            return "project";
+        case API_StoryNavItem:              return "story";
+        case API_SectionNavItem:            return "section";
+        case API_DetailDrawingNavItem:      return "detail_drawing";
+        case API_PerspectiveNavItem:        return "perspective";
+        case API_AxonometryNavItem:         return "axonometry";
+        case API_ListNavItem:               return "list";
+        case API_ScheduleNavItem:           return "schedule";
+        case API_TocNavItem:                return "toc";
+        case API_CameraNavItem:             return "camera";
+        case API_CameraSetNavItem:          return "camera_set";
+        case API_InfoNavItem:               return "info";
+        case API_HelpNavItem:               return "help";
+        case API_LayoutNavItem:             return "layout";
+        case API_MasterLayoutNavItem:       return "master_layout";
+        case API_BookNavItem:               return "book";
+        case API_MasterFolderNavItem:       return "master_folder";
+        case API_SubSetNavItem:             return "subset";
+        case API_TextListNavItem:           return "text_list";
+        case API_ElevationNavItem:          return "elevation";
+        case API_InteriorElevationNavItem:  return "interior_elevation";
+        case API_WorksheetDrawingNavItem:   return "worksheet";
+        case API_DocumentFrom3DNavItem:     return "document_from_3d";
+        case API_FolderNavItem:             return "folder";
+        case API_DrawingNavItem:            return "drawing";
+        default:                            return "undefined";
+    }
+}
+
+}  // namespace
+
+BulkGetNavigatorItemsCommand::BulkGetNavigatorItemsCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkGetNavigatorItemsCommand::GetName () const
+{
+    return "BulkGetNavigatorItems";
+}
+
+GS::Optional<GS::UniString> BulkGetNavigatorItemsCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkGetNavigatorItemsCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string" },
+            "count":       { "type": "integer" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkGetNavigatorItemsCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+    if (compression.empty ()) compression = "none";
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    Int32 mapId = 0;
+    std::string parentGuidStr;
+    try {
+        nlohmann::json j = nlohmann::json::from_msgpack (raw);
+        mapId         = j.value ("map_id", 0);
+        parentGuidStr = j.value ("parent_guid", "");
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+
+    API_NavigatorItem parentItem = {};
+    if (!parentGuidStr.empty ()) {
+        parentItem.guid = APIGuidFromString (parentGuidStr.c_str ());
+        if (parentItem.guid == APINULLGuid) {
+            return CreateErrorResponse (APIERR_BADPARS, "invalid parent_guid");
+        }
+        // При чтении children у известного item'а mapId берётся из самого item.
+        // Заполним явно — API использует его как фильтр.
+        parentItem.mapId = static_cast<API_NavigatorMapID> (mapId);
+    } else {
+        // Корневые items для заданного map.
+        parentItem.mapId    = static_cast<API_NavigatorMapID> (mapId);
+        parentItem.itemType = API_UndefinedNavItem;
+    }
+
+    GS::Array<API_NavigatorItem> items;
+    const GSErrCode apiErr = ACAPI_Navigator (
+        APINavigator_GetNavigatorChildrenItemsID,
+        &parentItem, nullptr, &items);
+
+    nlohmann::ordered_json out;
+    out["items"] = nlohmann::json::array ();
+    if (apiErr != NoError) {
+        out["count"] = static_cast<int64_t> (0);
+        // Возвращаем как ошибку, но с корректной структурой.
+    } else {
+        for (const API_NavigatorItem& it : items) {
+            nlohmann::ordered_json rec;
+            rec["guid"]           = APIGuidToString (it.guid).ToCStr ().Get ();
+            rec["name"]           = GS::UniString (it.uName).ToCStr ().Get ();
+            rec["item_type"]      = static_cast<int64_t> (it.itemType);
+            rec["item_type_name"] = NavItemTypeName (it.itemType);
+            rec["map_id"]         = static_cast<int64_t> (it.mapId);
+            rec["source_guid"]    = APIGuidToString (it.sourceGuid).ToCStr ().Get ();
+            rec["db_type"]        = static_cast<int64_t> (it.db.typeID);
+            out["items"].push_back (rec);
+        }
+        out["count"] = static_cast<int64_t> (items.GetSize ());
+    }
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 = EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64", GS::UniString (outB64.c_str ()));
+    response.Add ("compression", GS::UniString (outCompression.c_str ()));
+    response.Add ("count",       static_cast<Int64> (items.GetSize ()));
+    return response;
+}
+
+// ---------------------------------------------------------------------
+//  BulkCreateLayoutSubsetCommand
+// ---------------------------------------------------------------------
+//
+// Создать подмножество (папку) в Layout Book.
+//
+// Wire format (msgpack inside payload_b64):
+//   input:  { "name": str, "parent_guid"?: str, "previous_sibling_guid"?: str }
+//   output: { "guid": str, "name": str, "error": null|str }
+
+BulkCreateLayoutSubsetCommand::BulkCreateLayoutSubsetCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkCreateLayoutSubsetCommand::GetName () const
+{
+    return "BulkCreateLayoutSubset";
+}
+
+GS::Optional<GS::UniString> BulkCreateLayoutSubsetCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkCreateLayoutSubsetCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string" },
+            "guid":        { "type": "string" },
+            "name":        { "type": "string" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkCreateLayoutSubsetCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+    if (compression.empty ()) compression = "none";
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    std::string name, parentGuidStr, prevGuidStr;
+    try {
+        nlohmann::json j = nlohmann::json::from_msgpack (raw);
+        name          = j.value ("name", "");
+        parentGuidStr = j.value ("parent_guid", "");
+        prevGuidStr   = j.value ("previous_sibling_guid", "");
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+    if (name.empty ()) {
+        return CreateErrorResponse (APIERR_BADPARS, "name is required");
+    }
+
+    API_NavigatorItem navItem = {};
+    navItem.mapId    = API_LayoutMap;
+    navItem.itemType = API_SubSetNavItem;
+    GS::UniString nameUs (name.c_str ());
+    GS::UCopy (nameUs.ToUStr (), navItem.uName);
+
+    GS::Guid parentGuid, prevGuid;
+    const GS::Guid* parentPtr = nullptr;
+    const GS::Guid* prevPtr   = nullptr;
+    if (!parentGuidStr.empty ()) {
+        parentGuid = GS::Guid (parentGuidStr.c_str ());
+        parentPtr  = &parentGuid;
+    }
+    if (!prevGuidStr.empty ()) {
+        prevGuid = GS::Guid (prevGuidStr.c_str ());
+        prevPtr  = &prevGuid;
+    }
+
+    const GSErrCode apiErr = ACAPI_Navigator (
+        APINavigator_NewNavigatorViewID,
+        &navItem, nullptr, parentPtr, prevPtr);
+
+    nlohmann::ordered_json out;
+    if (apiErr == NoError) {
+        out["guid"]  = APIGuidToString (navItem.guid).ToCStr ().Get ();
+        out["name"]  = name;
+        out["error"] = nullptr;
+    } else {
+        out["guid"]  = nullptr;
+        out["name"]  = name;
+        out["error"] = std::string ("CreateLayoutSubset failed: ") +
+                        std::to_string (static_cast<long long> (apiErr));
+    }
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 = EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64", GS::UniString (outB64.c_str ()));
+    response.Add ("compression", GS::UniString (outCompression.c_str ()));
+    if (apiErr == NoError) {
+        response.Add ("guid", GS::UniString (APIGuidToString (navItem.guid).ToCStr ().Get ()));
+    }
+    response.Add ("name", GS::UniString (name.c_str ()));
+    return response;
+}
+
+// ---------------------------------------------------------------------
+//  BulkDeleteNavigatorItemCommand
+// ---------------------------------------------------------------------
+//
+// Удалить любой Navigator item по guid (папка, вид, подмножество).
+//
+// Wire format (msgpack inside payload_b64):
+//   input:  { "guid": str }
+//   output: { "ok": bool, "error": null|str }
+
+BulkDeleteNavigatorItemCommand::BulkDeleteNavigatorItemCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkDeleteNavigatorItemCommand::GetName () const
+{
+    return "BulkDeleteNavigatorItem";
+}
+
+GS::Optional<GS::UniString> BulkDeleteNavigatorItemCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkDeleteNavigatorItemCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string" },
+            "ok":          { "type": "boolean" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkDeleteNavigatorItemCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+    if (compression.empty ()) compression = "none";
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    std::string guidStr;
+    try {
+        nlohmann::json j = nlohmann::json::from_msgpack (raw);
+        guidStr = j.value ("guid", "");
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+    if (guidStr.empty ()) {
+        return CreateErrorResponse (APIERR_BADPARS, "guid is required");
+    }
+
+    const API_Guid guid = APIGuidFromString (guidStr.c_str ());
+    if (guid == APINULLGuid) {
+        return CreateErrorResponse (APIERR_BADPARS, "invalid guid");
+    }
+
+    const bool force = true;
+    const GSErrCode apiErr = ACAPI_Navigator (
+        APINavigator_DeleteNavigatorViewID, &guid, &force);
+
+    nlohmann::ordered_json out;
+    if (apiErr == NoError) {
+        out["ok"]    = true;
+        out["error"] = nullptr;
+    } else {
+        out["ok"]    = false;
+        out["error"] = std::string ("DeleteNavigatorView failed: ") +
+                        std::to_string (static_cast<long long> (apiErr));
+    }
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 = EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64", GS::UniString (outB64.c_str ()));
+    response.Add ("compression", GS::UniString (outCompression.c_str ()));
+    response.Add ("ok",          apiErr == NoError);
+    return response;
+}
+
 #endif  // TAPIR_HAS_EXTENDED_BULK
 
 BulkSetElementDataCommand::BulkSetElementDataCommand () :
