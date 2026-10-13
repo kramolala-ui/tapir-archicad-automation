@@ -2001,6 +2001,22 @@ Python-fallback в `BulkConnection.get_project_diff` — тот же
 **Итог приёмки: 11/11 команд работают на AC26.** ProjectDiff
 функционально доступен, хотя C++ реализация вырезана.
 
+**2026-10-13 (вечер-2):** Третья волна по свойствам. Добавлены:
+`BulkGetPropertyGroups`, `BulkChangePropertyGroups` (CRUD групп),
+`BulkValidatePropertyDefinitions` (ACAPI `APIAny_CheckPropertyExpressionStringID`,
+AC26-only guard), расширены `BulkCreatePropertyDefinitions`
+(`single_enum` / `multi_enum`) и `BulkChangePropertyDefinitions`
+(`group_guid` для перемещения). Python-сторона: хелперы
+`_normalize_enum_keys` (uuid5), `validate_property_definitions`,
+`get_property_groups`, `change/create/rename/delete_property_group`,
+`move_property_to_group`. Расширен §4h. **Enum round-trip подтверждён
+живьём**: `uuid5('mineral_wool')` совпадает с `keyVariant.guidValue`
+в ответе AC26. Две грабли AC26 (найдены через Graphisoft
+`Property_Test.cpp`): `keyVariant.type` = `API_PropertyGuidValueType`
+(не `valueType`), `nonLocalizedValue` = `GS::NoValue` — иначе
+`-2130313112`. **Ещё одна грабля:** серия `set_element_data`
+(≥3 подряд) вешает Archicad — правило добавлено в §4h.
+
 ---
 
 ## 10a. BulkGetElementData / BulkGetElementMesh / геометрия (2026-10-06)
