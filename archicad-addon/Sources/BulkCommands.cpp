@@ -6509,11 +6509,13 @@ GS::ObjectState BulkCreatePropertyDefinitionsCommand::Execute (
                     if (keyStr.empty () && displayStr.empty ()) continue;
 
                     // 1. keyVariant — GUID (требование ACAPI).
+                    //    GS::Guid → API_Guid через GSGuid2APIGuid
+                    //    (reinterpret_cast, API_Guid.hpp:51).
                     API_SingleEnumerationVariant v;
                     v.keyVariant.type = API_PropertyGuidValueType;
                     GS::Guid guid;
                     guid.Generate ();
-                    v.keyVariant.guidValue = guid;   // GS::Guid → API_Guid
+                    v.keyVariant.guidValue = GSGuid2APIGuid (guid);
 
                     // 2. displayVariant — что видит пользователь.
                     v.displayVariant.type = valueType;
