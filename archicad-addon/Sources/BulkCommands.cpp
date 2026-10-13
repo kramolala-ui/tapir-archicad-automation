@@ -8296,6 +8296,252 @@ GS::ObjectState BulkChangePropertyGroupsCommand::Execute (
 }
 
 // ---------------------------------------------------------------------
+//  BulkCreateViewMapFolderCommand
+// ---------------------------------------------------------------------
+//
+// Создать папку в View Map (Navigator).
+//
+// Wire format (msgpack inside payload_b64):
+//   input:  { "name": str,
+//             "parent_guid"?: str,
+//             "previous_sibling_guid"?: str }
+//   output: { "guid": str, "name": str, "error": null|str }
+
+BulkCreateViewMapFolderCommand::BulkCreateViewMapFolderCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkCreateViewMapFolderCommand::GetName () const
+{
+    return "BulkCreateViewMapFolder";
+}
+
+GS::Optional<GS::UniString> BulkCreateViewMapFolderCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkCreateViewMapFolderCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string" },
+            "guid":        { "type": "string" },
+            "name":        { "type": "string" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkCreateViewMapFolderCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+    if (compression.empty ()) compression = "none";
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    std::string name;
+    std::string parentGuidStr;
+    std::string prevGuidStr;
+    try {
+        nlohmann::json j = nlohmann::json::from_msgpack (raw);
+        name          = j.value ("name", "");
+        parentGuidStr = j.value ("parent_guid", "");
+        prevGuidStr   = j.value ("previous_sibling_guid", "");
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+    if (name.empty ()) {
+        return CreateErrorResponse (APIERR_BADPARS, "name is required");
+    }
+
+    API_NavigatorItem navItem = {};
+    navItem.mapId    = API_PublicViewMap;
+    navItem.itemType = API_FolderNavItem;
+    GS::UniString nameUs (name.c_str ());
+    GS::UCopy (nameUs.ToUStr (), navItem.uName);
+
+    GS::Guid parentGuid, prevGuid;
+    void* parentPtr = nullptr;
+    void* prevPtr   = nullptr;
+    if (!parentGuidStr.empty ()) {
+        parentGuid = GS::Guid (parentGuidStr.c_str ());
+        parentPtr  = (void*)&parentGuid;
+    }
+    if (!prevGuidStr.empty ()) {
+        prevGuid = GS::Guid (prevGuidStr.c_str ());
+        prevPtr  = (void*)&prevGuid;
+    }
+
+    GSErrCode apiErr = ACAPI_Navigator (
+        APINavigator_NewNavigatorViewID,
+        &navItem, nullptr, parentPtr, prevPtr);
+
+    nlohmann::ordered_json out;
+    if (apiErr == NoError) {
+        out["guid"]  = APIGuidToString (navItem.guid).ToCStr ().Get ();
+        out["name"]  = name;
+        out["error"] = nullptr;
+    } else {
+        out["guid"]  = nullptr;
+        out["name"]  = name;
+        out["error"] = std::string ("NewNavigatorViewID failed: ") +
+                        std::to_string (static_cast<long long> (apiErr));
+    }
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 = EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64", GS::UniString (outB64.c_str ()));
+    response.Add ("compression", GS::UniString (outCompression.c_str ()));
+    if (apiErr == NoError) {
+        response.Add ("guid", GS::UniString (APIGuidToString (navItem.guid).ToCStr ().Get ()));
+    }
+    response.Add ("name", GS::UniString (name.c_str ()));
+    return response;
+}
+
+// ---------------------------------------------------------------------
+//  BulkCloneProjectMapToViewMapCommand
+// ---------------------------------------------------------------------
+//
+// Клонировать item из Project Map в View Map (API 24+).
+//
+// Wire format (msgpack inside payload_b64):
+//   input:  { "source_guid": str, "parent_guid": str }
+//   output: { "created_guid": str, "error": null|str }
+
+BulkCloneProjectMapToViewMapCommand::BulkCloneProjectMapToViewMapCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkCloneProjectMapToViewMapCommand::GetName () const
+{
+    return "BulkCloneProjectMapToViewMap";
+}
+
+GS::Optional<GS::UniString> BulkCloneProjectMapToViewMapCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkCloneProjectMapToViewMapCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64":  { "type": "string" },
+            "compression":  { "type": "string" },
+            "created_guid": { "type": "string" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkCloneProjectMapToViewMapCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+    if (compression.empty ()) compression = "none";
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    std::string sourceGuidStr, parentGuidStr;
+    try {
+        nlohmann::json j = nlohmann::json::from_msgpack (raw);
+        sourceGuidStr = j.value ("source_guid", "");
+        parentGuidStr = j.value ("parent_guid", "");
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+    if (sourceGuidStr.empty () || parentGuidStr.empty ()) {
+        return CreateErrorResponse (APIERR_BADPARS, "source_guid and parent_guid are required");
+    }
+
+    API_Guid sourceGuid = APIGuidFromString (sourceGuidStr.c_str ());
+    API_Guid parentGuid = APIGuidFromString (parentGuidStr.c_str ());
+    if (sourceGuid == APINULLGuid || parentGuid == APINULLGuid) {
+        return CreateErrorResponse (APIERR_BADPARS, "invalid source_guid or parent_guid");
+    }
+
+    API_Guid createdGuid = APINULLGuid;
+    GSErrCode apiErr = ACAPI_Navigator (
+        APINavigator_CloneProjectMapItemToViewMapID,
+        (void*)&sourceGuid, (void*)&parentGuid, (void*)&createdGuid);
+
+    nlohmann::ordered_json out;
+    if (apiErr == NoError && createdGuid != APINULLGuid) {
+        out["created_guid"] = APIGuidToString (createdGuid).ToCStr ().Get ();
+        out["error"]        = nullptr;
+    } else {
+        out["created_guid"] = nullptr;
+        out["error"]        = std::string ("CloneProjectMapItemToViewMap failed: ") +
+                               std::to_string (static_cast<long long> (apiErr));
+    }
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 = EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64", GS::UniString (outB64.c_str ()));
+    response.Add ("compression", GS::UniString (outCompression.c_str ()));
+    if (apiErr == NoError && createdGuid != APINULLGuid) {
+        response.Add ("created_guid", GS::UniString (APIGuidToString (createdGuid).ToCStr ().Get ()));
+    }
+    return response;
+}
+
+// ---------------------------------------------------------------------
 //  BulkGetNavigatorItemsCommand
 // ---------------------------------------------------------------------
 //
