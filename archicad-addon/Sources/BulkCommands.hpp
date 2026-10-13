@@ -12,18 +12,24 @@
 //   текстов, mesh, clone, move, rotate, delete, create, set_element_data,
 //   get_element_data).
 //
-// TAPIR_HAS_PROJECT_DIFF = 0: AC25 и AC29.
-//   В AC25 у API_ElemDifferenceGenerator_GenerateDifference 4-й аргумент
+// TAPIR_HAS_PROJECT_DIFF = 0: AC25, AC26, AC29.
+//   AC25: у API_ElemDifferenceGenerator_GenerateDifference 4-й аргумент
 //   — указатель (не ссылка); API_ElemDifference не содержит
 //   isEnvironmentChanged. Проще вырезать команду, чем городить
 //   версионный шим.
+//   AC26 (2026-10-13 вечер): команда на живом проекте (662 объекта,
+//   3362 свойства) уходит в HTTP-таймаут, Archicad перестаёт отвечать
+//   на все последующие запросы. Причина — подвисание в
+//   ACAPI_ElemDifferenceGenerator_GetState или GenerateDifference.
+//   Диагностика отложена. Рабочие версии для ProjectDiff: AC27, AC28.
+//   AC29: API переехало.
 #if defined(ServerMainVers_2900)
 #  define TAPIR_HAS_EXTENDED_BULK 0
 #else
 #  define TAPIR_HAS_EXTENDED_BULK 1
 #endif
 
-#if defined(ServerMainVers_2500) || defined(ServerMainVers_2900)
+#if defined(ServerMainVers_2500) || defined(ServerMainVers_2600) || defined(ServerMainVers_2900)
 #  define TAPIR_HAS_PROJECT_DIFF 0
 #else
 #  define TAPIR_HAS_PROJECT_DIFF 1
