@@ -8670,14 +8670,15 @@ GS::ObjectState BulkDeleteNavigatorItemCommand::Execute (
         return CreateErrorResponse (APIERR_BADPARS, "guid is required");
     }
 
-    const API_Guid guid = APIGuidFromString (guidStr.c_str ());
+    API_Guid guid = APIGuidFromString (guidStr.c_str ());
     if (guid == APINULLGuid) {
         return CreateErrorResponse (APIERR_BADPARS, "invalid guid");
     }
 
-    const bool force = true;
-    const GSErrCode apiErr = ACAPI_Navigator (
-        APINavigator_DeleteNavigatorViewID, &guid, &force);
+    bool force = true;
+    GSErrCode apiErr = ACAPI_Navigator (
+        APINavigator_DeleteNavigatorViewID,
+        (void*)&guid, (void*)&force);
 
     nlohmann::ordered_json out;
     if (apiErr == NoError) {
