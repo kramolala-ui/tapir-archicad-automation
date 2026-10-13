@@ -1508,6 +1508,14 @@ GSErrCode Initialize (void)
             "Validate property expressions. Input payload: {guids?: [...]} | {all?: true}. Output payload: {checked_count, with_expression, valid_count, invalid_count, skipped_no_expression, invalid: [{guid, name, errors: [{error_code, expression}]}]}. Использует ACAPI_Goodies(APIAny_CheckPropertyExpressionStringID) — не создаёт и не меняет определения, только читает. Только AC26."
         );
         #endif  // TAPIR_HAS_PROPERTY_EXPR_CHECK
+        err |= RegisterCommand<BulkGetPropertyGroupsCommand> (
+            bulkCommands, "0.1.0",
+            "Read all property groups. Input payload: {} (empty). Output payload: {groups: [{guid, name, description, group_type}], count}."
+        );
+        err |= RegisterCommand<BulkChangePropertyGroupsCommand> (
+            bulkCommands, "0.1.0",
+            "Create / rename / delete property groups. Input payload: {updates: [{op: 'create', name, description?} | {op: 'change', guid, name?, description?} | {op: 'delete', guid}]}. Output payload: {results: [{index, op, guid?, name?, ok, error}], updated_count, errors_count}. One undo barrier for the whole batch."
+        );
         err |= RegisterCommand<BulkGetIFCPropertiesCommand> (
             bulkCommands, "0.1.0",
             "Read IFC properties of many elements. Input payload: {elements: [guids]}. Output payload: {rows: [{elementId, properties: [{propertySetName, propertyName, propertyDescription, propertyType: 'single'|'bounded'|'list'|'enumerated'|'table', readOnly, value, valueType, primitiveType}], error}]}. Only single-value properties carry a value; other IFC property types are listed without a value for now."
