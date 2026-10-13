@@ -6541,16 +6541,11 @@ GS::ObjectState BulkCreatePropertyDefinitionsCommand::Execute (
                         v.displayVariant.uniStringValue = GS::UniString (displayStr.c_str ());
                     }
 
-                    // 3. nonLocalizedValue — стабильный client-key
-                    //    для round-trip. НЕ GS::NoValue: в AC26 поле
-                    //    работает как «технический ID варианта».
-                    //    (Прошлый -2130313112 был из-за keyVariant.type
-                    //    = string, а не из-за nonLocalizedValue.)
-                    if (!keyStr.empty ()) {
-                        v.nonLocalizedValue = GS::UniString (keyStr.c_str ());
-                    } else {
-                        v.nonLocalizedValue = GS::NoValue;
-                    }
+                    // 3. nonLocalizedValue — ВСЕГДА GS::NoValue.
+                    //    AC26 отбивает свойство с APIERR_BADPARS
+                    //    (-2130313112), если это поле заполнено.
+                    //    Детерминированный key уже несёт keyVariant (см. выше).
+                    v.nonLocalizedValue = GS::NoValue;
 
                     enumValues.Push (v);
                 }
