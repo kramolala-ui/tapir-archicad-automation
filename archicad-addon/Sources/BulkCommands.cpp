@@ -8295,6 +8295,8 @@ GS::ObjectState BulkChangePropertyGroupsCommand::Execute (
     return response;
 }
 
+#if TAPIR_HAS_NAVIGATOR_API
+
 // ---------------------------------------------------------------------
 //  BulkCreateViewMapFolderCommand
 // ---------------------------------------------------------------------
