@@ -5675,7 +5675,7 @@ GSErrCode ApplyClassBatch (const API_Guid& elemGuid,
 
 }  // namespace
 
-#if TAPIR_HAS_EXTENDED_BULK
+#if TAPIR_HAS_PROJECT_DIFF
 
 // ---------------------------------------------------------------------
 //  BulkGetProjectDiffCommand
