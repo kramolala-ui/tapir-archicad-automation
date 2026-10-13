@@ -6456,6 +6456,19 @@ GS::ObjectState BulkCreatePropertyDefinitionsCommand::Execute (
             def.groupGuid       = groupGuid;
             def.name            = GS::UniString (name.c_str ());
             def.description     = GS::UniString (item.value ("description", "").c_str ());
+            // collection_type: поддерживаем только 'single'.
+            // enum / list требуют possibleEnumValues — отдельная задача.
+            // Если передан другой тип — явная ошибка (не молчаливая подмена).
+            {
+                const std::string ctStr = item.value ("collection_type", "single");
+                if (ctStr != "single") {
+                    rec["error"] = std::string ("collection_type='") + ctStr +
+                                   "' not supported (only 'single')";
+                    out["created"].push_back (rec);
+                    ++errorsCount;
+                    continue;
+                }
+            }
             def.collectionType  = API_PropertySingleCollectionType;
             def.valueType       = valueType;
             def.measureType     = ParseMeasureType (item.value ("measure_type", "default"));
