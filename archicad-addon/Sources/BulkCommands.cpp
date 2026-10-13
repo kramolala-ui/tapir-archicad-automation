@@ -7611,7 +7611,10 @@ GS::ObjectState BulkRemoveIFCPropertiesCommand::Execute (
                 continue;
             }
 
+#pragma warning(push)
+#pragma warning(disable: 4996)
             const GSErrCode e = ACAPI_Element_RemoveIFCProperty (guid, prop);
+#pragma warning(pop)
             if (e == NoError) {
                 rec["ok"] = true;
                 ++removedCount;
