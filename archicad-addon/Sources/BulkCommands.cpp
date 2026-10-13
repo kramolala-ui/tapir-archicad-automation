@@ -7303,7 +7303,13 @@ GS::ObjectState BulkGetIFCPropertiesCommand::Execute (
         GS::Array<API_IFCProperty> props;
         // storedOnly=false — документация DevKit: «Get only the core data
         // without the derived content, must be false in most cases».
+        // AC26: API помечен deprecated (см. IFCAPI::v1::GetLocalProperties),
+        // но новый API использует hook-механику и недоступен без переделки
+        // команды. C4996 подавляем точечно.
+#pragma warning(push)
+#pragma warning(disable: 4996)
         const GSErrCode e = ACAPI_Element_GetIFCProperties (guid, false, &props);
+#pragma warning(pop)
         if (e != NoError) {
             row["error"] = std::string ("GetIFCProperties failed: ") +
                            std::to_string (static_cast<long long> (e));
