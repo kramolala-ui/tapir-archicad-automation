@@ -7924,10 +7924,19 @@ GS::ObjectState BulkValidatePropertyDefinitionsCommand::Execute (
         GS::UniString exprCopy = joined;
         const GSErrCode err = ACAPI_Goodies (
             APIAny_CheckPropertyExpressionStringID, &exprCopy);
+        // 2026-10-13: код -2130313101 = «unknown function» от CPES.
+        // Сторонние аддоны (SomeStuff / kuvbur) регистрируют собственные
+        // функции для property expressions — SPLIT, SPLITRIGHT,
+        // SUBSTITUTE, STRPOS и т.п. CPES про них не знает и возвращает
+        // эту ошибку. Это НЕ «формула сломана», а «не могу проверить
+        // без стороннего аддона». Помечаем kind=unverifiable, счётчик
+        // invalid не инкрементим.
+        const bool isUnverifiable = (err == -2130313101);
         if (err != NoError) {
             nlohmann::ordered_json e;
             e["error_code"] = static_cast<int64_t> (err);
             e["expression"] = joined.ToCStr ().Get ();
+            e["kind"]       = isUnverifiable ? "unverifiable" : "invalid";
             errors.push_back (e);
         }
 
