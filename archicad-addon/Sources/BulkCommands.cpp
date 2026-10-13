@@ -8551,18 +8551,18 @@ GS::ObjectState BulkCreateLayoutSubsetCommand::Execute (
     GS::UCopy (nameUs.ToUStr (), navItem.uName);
 
     GS::Guid parentGuid, prevGuid;
-    const GS::Guid* parentPtr = nullptr;
-    const GS::Guid* prevPtr   = nullptr;
+    void* parentPtr = nullptr;
+    void* prevPtr   = nullptr;
     if (!parentGuidStr.empty ()) {
         parentGuid = GS::Guid (parentGuidStr.c_str ());
-        parentPtr  = &parentGuid;
+        parentPtr  = (void*)&parentGuid;
     }
     if (!prevGuidStr.empty ()) {
         prevGuid = GS::Guid (prevGuidStr.c_str ());
-        prevPtr  = &prevGuid;
+        prevPtr  = (void*)&prevGuid;
     }
 
-    const GSErrCode apiErr = ACAPI_Navigator (
+    GSErrCode apiErr = ACAPI_Navigator (
         APINavigator_NewNavigatorViewID,
         &navItem, nullptr, parentPtr, prevPtr);
 
