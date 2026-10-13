@@ -5924,6 +5924,315 @@ GS::ObjectState BulkGetProjectDiffCommand::Execute (
     return response;
 }
 
+// ---------------------------------------------------------------------
+//  BulkGetProjectInfoCommand
+// ---------------------------------------------------------------------
+//
+// Reads the current project info via ACAPI_ProjectOperation_Project.
+// Symmetric to the JSON GetProjectInfoCommand but delivered through the
+// binary bulk channel; adds project_modi_stamp (UInt64) which the JSON
+// variant does not expose.
+//
+// Wire format:
+//   input:  {} (empty payload)
+//   output: { "project_path": "C:\\...",
+//             "project_name": "...",
+//             "is_untitled": bool,
+//             "is_teamwork": bool,
+//             "user_id":      int,
+//             "workgroup_mode": int,
+//             "project_modi_stamp": int64,
+//             "error": null|"msg" }
+
+BulkGetProjectInfoCommand::BulkGetProjectInfoCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkGetProjectInfoCommand::GetName () const
+{
+    return "BulkGetProjectInfo";
+}
+
+GS::Optional<GS::UniString> BulkGetProjectInfoCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkGetProjectInfoCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkGetProjectInfoCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+    if (compression.empty ()) compression = "none";
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    // payload читаем, но не используем — нужен только факт запроса.
+    try { (void) nlohmann::json::from_msgpack (raw); }
+    catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+
+    nlohmann::ordered_json out;
+    out["project_path"]      = "";
+    out["project_name"]      = "";
+    out["is_untitled"]       = false;
+    out["is_teamwork"]       = false;
+    out["user_id"]           = 0;
+    out["workgroup_mode"]    = 0;
+    out["project_modi_stamp"] = static_cast<int64_t> (0);
+    out["error"]             = nullptr;
+
+    API_ProjectInfo info;
+    const GSErrCode e = ACAPI_ProjectOperation_Project (&info);
+    if (e != NoError) {
+        out["error"] = std::string ("ACAPI_ProjectOperation_Project failed: ") +
+                       std::to_string (static_cast<long long> (e));
+    } else {
+        out["is_untitled"]    = info.untitled;
+        out["is_teamwork"]    = info.teamwork;
+        out["user_id"]        = static_cast<int64_t> (info.userId);
+        out["workgroup_mode"] = static_cast<int64_t> (info.workGroupMode);
+        out["project_modi_stamp"] = static_cast<int64_t> (info.modiStamp);
+        if (info.projectPath != nullptr) {
+            out["project_path"] = info.projectPath->ToCStr ().Get ();
+        }
+        if (info.projectName != nullptr) {
+            out["project_name"] = info.projectName->ToCStr ().Get ();
+        }
+    }
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 = EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64", GS::UniString (outB64.c_str ()));
+    response.Add ("compression", GS::UniString (outCompression.c_str ()));
+    return response;
+}
+
+// ---------------------------------------------------------------------
+//  BulkGetElementHeadersCommand
+// ---------------------------------------------------------------------
+//
+// Mass-read only API_Elem_Head fields for a list of guids: modiStamp,
+// element type, floorInd, layer, groupGuid, hotlinkGuid, hasMemo,
+// userId, renovationStatus. No memo, no properties, no mesh — very
+// fast (~0.05-0.1 ms/element). Fallback / companion to
+// BulkGetProjectDiff, and the building block for change detection when
+// a diff state file is not available.
+//
+// Wire format:
+//   input:  { "elements": ["guid", ...] }
+//   output: { "rows": [
+//       { "elementId": "guid",
+//         "modiStamp": int64,
+//         "type": "Wall"|"Slab"|...,
+//         "floorInd": int,
+//         "layer": int,
+//         "groupGuid": "..."|null,
+//         "hotlinkGuid": "..."|null,
+//         "hasMemo": bool,
+//         "userId": int,
+//         "renovationStatus": int,
+//         "error": null },
+//       ... ] }
+
+namespace {
+
+// Element-type name used across the whole Bulk channel (kept in sync with
+// ElementTypeName in BulkGetElementData). Only the common types are named
+// explicitly; the rest go through "Unknown" for compact output.
+std::string HeaderTypeName (const API_ElemType& elemType)
+{
+    switch (elemType.typeID) {
+        case API_ObjectID:       return "Object";
+        case API_LampID:         return "Lamp";
+        case API_WallID:         return "Wall";
+        case API_SlabID:         return "Slab";
+        case API_ZoneID:         return "Zone";
+        case API_ColumnID:       return "Column";
+        case API_BeamID:         return "Beam";
+        case API_WindowID:       return "Window";
+        case API_DoorID:         return "Door";
+        case API_RoofID:         return "Roof";
+        case API_MeshID:         return "Mesh";
+        case API_MorphID:        return "Morph";
+        case API_CurtainWallID:  return "CurtainWall";
+        case API_StairID:        return "Stair";
+        case API_RailingID:      return "Railing";
+        case API_TextID:         return "Text";
+        case API_LabelID:        return "Label";
+        default:                 return "Unknown";
+    }
+}
+
+}  // namespace
+
+BulkGetElementHeadersCommand::BulkGetElementHeadersCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkGetElementHeadersCommand::GetName () const
+{
+    return "BulkGetElementHeaders";
+}
+
+GS::Optional<GS::UniString> BulkGetElementHeadersCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkGetElementHeadersCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64":    { "type": "string" },
+            "compression":    { "type": "string" },
+            "elements_count": { "type": "integer" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkGetElementHeadersCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+    if (compression.empty ()) compression = "none";
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    std::vector<std::string> elemGuids;
+    try {
+        nlohmann::json j = nlohmann::json::from_msgpack (raw);
+        if (!j.contains ("elements")) {
+            return CreateErrorResponse (APIERR_BADPARS, "payload must contain 'elements'");
+        }
+        for (const auto& s : j["elements"]) elemGuids.push_back (s.get<std::string> ());
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+
+    nlohmann::ordered_json out;
+    out["rows"] = nlohmann::json::array ();
+
+    for (const std::string& guidStr : elemGuids) {
+        nlohmann::ordered_json row;
+        row["elementId"]       = guidStr;
+        row["modiStamp"]       = static_cast<int64_t> (0);
+        row["type"]            = "Unknown";
+        row["floorInd"]        = 0;
+        row["layer"]           = -1;
+        row["groupGuid"]       = nullptr;
+        row["hotlinkGuid"]     = nullptr;
+        row["hasMemo"]         = false;
+        row["userId"]          = 0;
+        row["renovationStatus"] = 0;
+        row["error"]           = nullptr;
+
+        API_Guid guid = APIGuidFromString (guidStr.c_str ());
+        if (guid == APINULLGuid) {
+            row["error"] = "invalid guid";
+            out["rows"].push_back (row);
+            continue;
+        }
+
+        API_Elem_Head head = {};
+        head.guid = guid;
+        const GSErrCode e = ACAPI_Element_GetHeader (&head, 0);
+        if (e != NoError) {
+            row["error"] = std::string ("GetHeader failed: ") +
+                           std::to_string (static_cast<long long> (e));
+            out["rows"].push_back (row);
+            continue;
+        }
+
+        row["elementId"]       = APIGuidToString (head.guid).ToCStr ().Get ();
+        row["modiStamp"]       = static_cast<int64_t> (head.modiStamp);
+        row["type"]            = HeaderTypeName (head.type);
+        row["floorInd"]        = static_cast<int64_t> (head.floorInd);
+        row["layer"]           = static_cast<int64_t> (GetAttributeIndex (head.layer));
+        if (head.groupGuid != APINULLGuid) {
+            row["groupGuid"] = APIGuidToString (head.groupGuid).ToCStr ().Get ();
+        }
+        if (head.hotlinkGuid != APINULLGuid) {
+            row["hotlinkGuid"] = APIGuidToString (head.hotlinkGuid).ToCStr ().Get ();
+        }
+        row["hasMemo"]         = head.hasMemo;
+        row["userId"]          = static_cast<int64_t> (head.userId);
+        row["renovationStatus"] = static_cast<int64_t> (head.renovationStatus);
+        out["rows"].push_back (row);
+    }
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 = EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64",    GS::UniString (outB64.c_str ()));
+    response.Add ("compression",    GS::UniString (outCompression.c_str ()));
+    response.Add ("elements_count", static_cast<Int64> (elemGuids.size ()));
+    return response;
+}
+
 BulkSetElementDataCommand::BulkSetElementDataCommand () :
     CommandBase (CommonSchema::Used)
 {
