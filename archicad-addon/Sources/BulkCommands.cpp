@@ -6079,9 +6079,12 @@ namespace {
 // Element-type name used across the whole Bulk channel (kept in sync with
 // ElementTypeName in BulkGetElementData). Only the common types are named
 // explicitly; the rest go through "Unknown" for compact output.
-std::string HeaderTypeName (const API_ElemType& elemType)
+// 2026-10-13: принимает API_ElemTypeID, а не API_ElemType — в AC25 нет
+// struct API_ElemType. Вызывается через GetElemTypeId(head) из
+// MigrationHelper.hpp, который знает оба варианта.
+std::string HeaderTypeName (API_ElemTypeID typeID)
 {
-    switch (elemType.typeID) {
+    switch (typeID) {
         case API_ObjectID:       return "Object";
         case API_LampID:         return "Lamp";
         case API_WallID:         return "Wall";
