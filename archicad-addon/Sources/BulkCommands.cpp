@@ -6456,23 +6456,74 @@ GS::ObjectState BulkCreatePropertyDefinitionsCommand::Execute (
             def.groupGuid       = groupGuid;
             def.name            = GS::UniString (name.c_str ());
             def.description     = GS::UniString (item.value ("description", "").c_str ());
-            // collection_type: поддерживаем только 'single'.
-            // enum / list требуют possibleEnumValues — отдельная задача.
-            // Если передан другой тип — явная ошибка (не молчаливая подмена).
-            {
-                const std::string ctStr = item.value ("collection_type", "single");
-                if (ctStr != "single") {
-                    rec["error"] = std::string ("collection_type='") + ctStr +
-                                   "' not supported (only 'single')";
+            // collection_type: 'single' | 'single_enum' | 'multi_enum'.
+            // 'list' — не поддерживаем (нет use case, отдельная задача).
+            const std::string ctStr = item.value ("collection_type", "single");
+            API_PropertyCollectionType collType = API_PropertySingleCollectionType;
+            if (ctStr == "single") {
+                collType = API_PropertySingleCollectionType;
+            } else if (ctStr == "single_enum") {
+                collType = API_PropertySingleChoiceEnumerationCollectionType;
+            } else if (ctStr == "multi_enum") {
+                collType = API_PropertyMultipleChoiceEnumerationCollectionType;
+            } else {
+                rec["error"] = std::string ("collection_type='") + ctStr +
+                               "' not supported (single | single_enum | multi_enum)";
+                out["created"].push_back (rec);
+                ++errorsCount;
+                continue;
+            }
+
+            // Для enum — парсим possible_enum_values.
+            // Каждый элемент: { "key": <scalar>, "display"?: <str> }
+            // keyVariant имеет тип value_type (обычно string).
+            // displayVariant — всегда строка (что видит пользователь).
+            GS::Array<API_SingleEnumerationVariant> enumValues;
+            if (collType != API_PropertySingleCollectionType) {
+                if (!item.contains ("possible_enum_values") ||
+                    !item["possible_enum_values"].is_array () ||
+                    item["possible_enum_values"].empty ()) {
+                    rec["error"] = "enum collection requires non-empty 'possible_enum_values' array";
+                    out["created"].push_back (rec);
+                    ++errorsCount;
+                    continue;
+                }
+                bool firstValue = true;
+                for (const auto& ev : item["possible_enum_values"]) {
+                    if (!ev.is_object ()) continue;
+                    API_SingleEnumerationVariant v;
+                    v.keyVariant.type = valueType;
+                    v.displayVariant.type = API_PropertyStringValueType;
+
+                    // key: scalar. Если не задан — берём display как key.
+                    if (ev.contains ("key") && !ev["key"].is_null ()) {
+                        FillVariant (v.keyVariant, valueType, ev["key"]);
+                    } else if (ev.contains ("display") && !ev["display"].is_null ()) {
+                        FillVariant (v.keyVariant, valueType, ev["display"]);
+                    } else {
+                        continue;   // пустой элемент — пропускаем
+                    }
+
+                    // display: всегда строка. Если не задан — используем key как строку.
+                    const std::string displayStr = ev.value ("display", ev.value ("key", ""));
+                    v.displayVariant.uniStringValue = GS::UniString (displayStr.c_str ());
+
+                    enumValues.Push (v);
+                    firstValue = false;
+                }
+                if (enumValues.IsEmpty ()) {
+                    rec["error"] = "possible_enum_values has no valid entries (each needs 'key' or 'display')";
                     out["created"].push_back (rec);
                     ++errorsCount;
                     continue;
                 }
             }
-            def.collectionType  = API_PropertySingleCollectionType;
-            def.valueType       = valueType;
-            def.measureType     = ParseMeasureType (item.value ("measure_type", "default"));
-            def.canValueBeEditable = item.value ("can_value_be_editable", true);
+
+            def.collectionType      = collType;
+            def.possibleEnumValues  = enumValues;   // пусто для single
+            def.valueType           = valueType;
+            def.measureType         = ParseMeasureType (item.value ("measure_type", "default"));
+            def.canValueBeEditable  = item.value ("can_value_be_editable", true);
 
             // Default value (basicValue) — если не формула.
             // Всегда инициализируем type, иначе expression-валидация упадёт.
