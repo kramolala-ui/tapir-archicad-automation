@@ -7895,6 +7895,310 @@ GS::ObjectState BulkValidatePropertyDefinitionsCommand::Execute (
 
 #endif  // TAPIR_HAS_PROPERTY_EXPR_CHECK
 
+// ---------------------------------------------------------------------
+//  BulkGetPropertyGroupsCommand
+// ---------------------------------------------------------------------
+//
+// Список всех групп свойств проекта (включая built-in).
+//
+// Wire format (msgpack inside payload_b64):
+//   input:  {}
+//   output: { "groups": [{guid, name, description, group_type}], "count": N }
+//           group_type: "custom" | "unknown"
+
+BulkGetPropertyGroupsCommand::BulkGetPropertyGroupsCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkGetPropertyGroupsCommand::GetName () const
+{
+    return "BulkGetPropertyGroups";
+}
+
+GS::Optional<GS::UniString> BulkGetPropertyGroupsCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkGetPropertyGroupsCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string" },
+            "count":       { "type": "integer" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkGetPropertyGroupsCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+    if (compression.empty ()) compression = "none";
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    // input пустой — не парсим содержимое; сигнатура для совместимости
+    GS::Array<API_PropertyGroup> groups;
+    const GSErrCode e = ACAPI_Property_GetPropertyGroups (groups);
+    if (e != NoError) {
+        return CreateErrorResponse (e, "GetPropertyGroups failed");
+    }
+
+    nlohmann::ordered_json out;
+    out["groups"] = nlohmann::json::array ();
+
+    for (const API_PropertyGroup& grp : groups) {
+        nlohmann::ordered_json rec;
+        rec["guid"]        = APIGuidToString (grp.guid).ToCStr ().Get ();
+        rec["name"]        = grp.name.ToCStr ().Get ();
+        rec["description"] = grp.description.ToCStr ().Get ();
+        switch (grp.groupType) {
+            case API_PropertyCustomGroupType:   rec["group_type"] = "custom";   break;
+            default:                            rec["group_type"] = "unknown";  break;
+        }
+        out["groups"].push_back (rec);
+    }
+
+    out["count"] = static_cast<int64_t> (groups.GetSize ());
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 = EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64", GS::UniString (outB64.c_str ()));
+    response.Add ("compression", GS::UniString (outCompression.c_str ()));
+    response.Add ("count",       static_cast<Int64> (groups.GetSize ()));
+    return response;
+}
+
+// ---------------------------------------------------------------------
+//  BulkChangePropertyGroupsCommand
+// ---------------------------------------------------------------------
+//
+// Создание / переименование / удаление групп свойств.
+// Один undo-барьер на весь батч.
+//
+// Wire format (msgpack inside payload_b64):
+//   input: { "updates": [
+//     { "op": "create", "name": "Отопление", "description"?: "..." },
+//     { "op": "change", "guid": "...", "name"?: "...", "description"?: "..." },
+//     { "op": "delete", "guid": "..." }
+//   ] }
+//   output: { "results": [{index, op, guid?, name?, ok, error}],
+//             "updated_count": N, "errors_count": M }
+
+BulkChangePropertyGroupsCommand::BulkChangePropertyGroupsCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkChangePropertyGroupsCommand::GetName () const
+{
+    return "BulkChangePropertyGroups";
+}
+
+GS::Optional<GS::UniString> BulkChangePropertyGroupsCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkChangePropertyGroupsCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64":   { "type": "string" },
+            "compression":   { "type": "string" },
+            "updated_count": { "type": "integer" },
+            "errors_count":  { "type": "integer" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkChangePropertyGroupsCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+    if (compression.empty ()) compression = "none";
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    nlohmann::json j;
+    try {
+        j = nlohmann::json::from_msgpack (raw);
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+    if (!j.contains ("updates") || !j["updates"].is_array ()) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload must contain 'updates' array");
+    }
+
+    nlohmann::ordered_json out;
+    out["results"]      = nlohmann::json::array ();
+    out["updated_count"] = static_cast<int64_t> (0);
+    out["errors_count"]  = static_cast<int64_t> (0);
+
+    size_t updatedCount = 0;
+    size_t errorsCount  = 0;
+
+    ACAPI_CallUndoableCommand ("BulkChangePropertyGroups", [&] () -> GSErrCode {
+        int32_t idx = 0;
+        for (const auto& item : j["updates"]) {
+            nlohmann::ordered_json rec;
+            rec["index"] = idx++;
+            rec["op"]    = item.value ("op", "");
+            rec["ok"]    = false;
+            rec["error"] = nullptr;
+
+            const std::string op = rec["op"].get<std::string> ();
+            if (op == "create") {
+                const std::string name = item.value ("name", "");
+                if (name.empty ()) {
+                    rec["error"] = "create requires non-empty 'name'";
+                    out["results"].push_back (rec);
+                    ++errorsCount;
+                    continue;
+                }
+                API_PropertyGroup grp;
+                grp.groupType   = API_PropertyCustomGroupType;
+                grp.guid        = APINULLGuid;
+                grp.name        = GS::UniString (name.c_str ());
+                grp.description = GS::UniString (item.value ("description", "").c_str ());
+                const GSErrCode e = ACAPI_Property_CreatePropertyGroup (grp);
+                if (e == NoError) {
+                    rec["ok"]   = true;
+                    rec["guid"] = APIGuidToString (grp.guid).ToCStr ().Get ();
+                    rec["name"] = grp.name.ToCStr ().Get ();
+                    ++updatedCount;
+                } else {
+                    rec["error"] = std::string ("CreatePropertyGroup failed: ") +
+                                   std::to_string (static_cast<long long> (e));
+                    ++errorsCount;
+                }
+            } else if (op == "change") {
+                const std::string gstr = item.value ("guid", "");
+                const API_Guid guid = APIGuidFromString (gstr.c_str ());
+                if (guid == APINULLGuid) {
+                    rec["error"] = "change requires valid 'guid'";
+                    out["results"].push_back (rec);
+                    ++errorsCount;
+                    continue;
+                }
+                API_PropertyGroup grp;
+                grp.guid = guid;
+                if (ACAPI_Property_GetPropertyGroup (grp) != NoError) {
+                    rec["error"] = "GetPropertyGroup failed (not found?)";
+                    out["results"].push_back (rec);
+                    ++errorsCount;
+                    continue;
+                }
+                if (item.contains ("name"))
+                    grp.name = GS::UniString (item["name"].get<std::string> ().c_str ());
+                if (item.contains ("description"))
+                    grp.description = GS::UniString (item["description"].get<std::string> ().c_str ());
+                const GSErrCode e = ACAPI_Property_ChangePropertyGroup (grp);
+                if (e == NoError) {
+                    rec["ok"]   = true;
+                    rec["guid"] = gstr;
+                    rec["name"] = grp.name.ToCStr ().Get ();
+                    ++updatedCount;
+                } else {
+                    rec["error"] = std::string ("ChangePropertyGroup failed: ") +
+                                   std::to_string (static_cast<long long> (e));
+                    ++errorsCount;
+                }
+            } else if (op == "delete") {
+                const std::string gstr = item.value ("guid", "");
+                const API_Guid guid = APIGuidFromString (gstr.c_str ());
+                if (guid == APINULLGuid) {
+                    rec["error"] = "delete requires valid 'guid'";
+                    out["results"].push_back (rec);
+                    ++errorsCount;
+                    continue;
+                }
+                const GSErrCode e = ACAPI_Property_DeletePropertyGroup (guid);
+                if (e == NoError) {
+                    rec["ok"]   = true;
+                    rec["guid"] = gstr;
+                    ++updatedCount;
+                } else {
+                    rec["error"] = std::string ("DeletePropertyGroup failed: ") +
+                                   std::to_string (static_cast<long long> (e));
+                    ++errorsCount;
+                }
+            } else {
+                rec["error"] = std::string ("unknown op '") + op +
+                               "' (expected: create | change | delete)";
+                ++errorsCount;
+            }
+            out["results"].push_back (rec);
+        }
+        return NoError;
+    });
+
+    out["updated_count"] = static_cast<int64_t> (updatedCount);
+    out["errors_count"]  = static_cast<int64_t> (errorsCount);
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 = EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64",   GS::UniString (outB64.c_str ()));
+    response.Add ("compression",   GS::UniString (outCompression.c_str ()));
+    response.Add ("updated_count", static_cast<Int64> (updatedCount));
+    response.Add ("errors_count",  static_cast<Int64> (errorsCount));
+    return response;
+}
+
 #endif  // TAPIR_HAS_EXTENDED_BULK
 
 BulkSetElementDataCommand::BulkSetElementDataCommand () :
