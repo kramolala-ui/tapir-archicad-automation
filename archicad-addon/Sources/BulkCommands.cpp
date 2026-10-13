@@ -6454,11 +6454,28 @@ GS::ObjectState BulkCreatePropertyDefinitionsCommand::Execute (
             def.measureType     = ParseMeasureType (item.value ("measure_type", "default"));
             def.canValueBeEditable = item.value ("can_value_be_editable", true);
 
+            // Default value (basicValue) — если не формула.
+            // Всегда инициализируем type, иначе expression-валидация упадёт.
+            def.defaultValue.basicValue.singleVariant.variant.type = valueType;
             if (item.contains ("default_value") && !item["default_value"].is_null ()) {
-                API_Variant v;
-                FillVariant (v, valueType, item["default_value"]);
-                def.defaultValue.basicValue.singleVariant.variant = v;
+                FillVariant (def.defaultValue.basicValue.singleVariant.variant, valueType, item["default_value"]);
                 def.defaultValue.basicValue.variantStatus = API_VariantStatusNormal;
+            }
+
+            // Формула (expression)
+            if (item.value ("has_expression", false) && item.contains ("property_expressions")) {
+                def.defaultValue.hasExpression = true;
+                for (const auto& e : item["property_expressions"]) {
+                    def.defaultValue.propertyExpressions.Push (GS::UniString (e.get<std::string> ().c_str ()));
+                }
+            }
+
+            // Availability (фильтр по классификационным категориям)
+            if (item.contains ("availability") && !item["availability"].is_null ()) {
+                for (const auto& g : item["availability"]) {
+                    const API_Guid cg = APIGuidFromString (g.get<std::string> ().c_str ());
+                    if (cg != APINULLGuid) def.availability.Push (cg);
+                }
             }
 
             const GSErrCode e = ACAPI_Property_CreatePropertyDefinition (def);
