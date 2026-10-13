@@ -7831,6 +7831,7 @@ GS::Optional<GS::UniString> BulkValidatePropertyDefinitionsCommand::GetRawRespon
             "with_expression":       { "type": "integer" },
             "valid_count":           { "type": "integer" },
             "invalid_count":         { "type": "integer" },
+            "unverifiable_count":    { "type": "integer" },
             "skipped_no_expression": { "type": "integer" }
         },
         "additionalProperties": false,
