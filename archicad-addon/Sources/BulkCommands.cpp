@@ -6962,6 +6962,12 @@ GS::ObjectState BulkChangePropertyDefinitionsCommand::Execute (
             if (item.contains ("description")) def.description = GS::UniString (item["description"].get<std::string> ().c_str ());
             if (item.contains ("can_value_be_editable")) def.canValueBeEditable = item["can_value_be_editable"].get<bool> ();
 
+            // Перемещение в другую группу (2026-10-13)
+            if (item.contains ("group_guid") && !item["group_guid"].is_null ()) {
+                const API_Guid newGrp = APIGuidFromString (item["group_guid"].get<std::string> ().c_str ());
+                if (newGrp != APINULLGuid) def.groupGuid = newGrp;
+            }
+
             if (item.contains ("value_type")) {
                 const API_VariantType vt = ParseValueType (item["value_type"].get<std::string> ());
                 if (vt != API_PropertyUndefinedValueType) def.valueType = vt;
