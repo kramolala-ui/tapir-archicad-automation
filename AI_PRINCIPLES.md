@@ -1036,6 +1036,38 @@ EXTENDED_BULK.
 Прочие 9 команд 2-й/3-й волны (ProjectInfo, ElementHeaders,
 Property x4, IFC x3) на AC26 **работают и проверены живьём**.
 
+**ProjectDiff fallback в Python (2026-10-13, вечер).** Функциональность
+восстановлена на стороне клиента. `BulkConnection.get_project_diff`
+в IFC_analyzer обёрнут: если C++ команда недоступна (в AC26 — вырезана,
+в AC25/AC29 — тоже), или вернула `error`, вызывается
+`_project_diff_fallback`. Он делает то же самое через **уже работающие**
+команды:
+
+    1. `GetElementsByType` (elementType='all', fallback — перебор типов)
+       → список всех guid'ов проекта.
+    2. `BulkGetElementHeaders` батчами по 1000 → {guid: modiStamp}.
+    3. Сохраняет словарь в JSON-файл (state_path).
+    4. При наличии файла — diff: added / modified (modiStamp !=) /
+       deleted.
+
+**Контракт ответа идентичен C++ версии** — пользователь не видит
+разницы. Единственное отличие: `isEnvironmentChanged` всегда `false`
+(это поле API_ElemDifference, через modiStamp его не вывести).
+Семантика совпадает с `diff_type='modificationStamp'`.
+
+**Приёмка (живой AC26):**
+
+    state_entries=9513 (elementType='all')
+    first_run=true → файл сохранён
+    second_run (без правок) → 0/0/0
+    правка object_pos_x → modiStamp 3658166655 → 3679941704
+    diff после правки → 0 new / 1 modified / 0 deleted, GUID в списке
+    diff без правок → 0/0/0
+
+Сборка на AC26 (после TAPIR_HAS_PROJECT_DIFF=0) — 9 C++ команд +
+Python-fallback на все 5 версий. Это **правильный** дизайн: клиент
+знает про версионные отличия, C++ остаётся чистым.
+
 ### Таблица сборки
 
 | Версия | PROJECT_DIFF | EXTENDED_BULK | ProjectDiff | ProjectInfo + Headers + Prop x4 + IFC x3 | Классические |
