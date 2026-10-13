@@ -7903,6 +7903,7 @@ GS::ObjectState BulkValidatePropertyDefinitionsCommand::Execute (
     out["invalid"]               = nlohmann::json::array ();
 
     int64_t withExpr = 0, valid = 0, invalid = 0, skipped = 0;
+    int64_t unverifiable = 0;   // 2026-10-13: -2130313101 (unknown func)
 
     for (const API_PropertyDefinition& def : defs) {
         if (!def.defaultValue.hasExpression ||
