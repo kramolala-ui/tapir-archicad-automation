@@ -45,6 +45,17 @@
 #  define TAPIR_HAS_PROPERTY_EXPR_CHECK 0
 #endif
 
+// 2026-10-13 (late): Navigator API (ACAPI_Navigator / APINavigator_*ID)
+// компилируется в AC25/AC26 DevKit, отсутствует в AC27/AC28 (CI:
+// identifier not found). AC29 не пытается — там EXTENDED_BULK=0.
+// Команды Navigator временно вырезаны на 27+ до проверки API по
+// документации Graphisoft. См. plugins/archicad_plugin/bulk_connection.py.
+#if defined(ServerMainVers_2500) || defined(ServerMainVers_2600)
+#  define TAPIR_HAS_NAVIGATOR_API 1
+#else
+#  define TAPIR_HAS_NAVIGATOR_API 0
+#endif
+
 class CreateElementsCommandBase;
 
 // Bulk commands: бинарный транспорт (msgpack + zstd) поверх JSON-обёртки.
