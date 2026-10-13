@@ -1533,6 +1533,7 @@ GSErrCode Initialize (void)
             bulkCommands, "0.1.0",
             "Delete a Navigator item by guid (folder, view, layout, subset). Input payload: {guid}. Output payload: {ok, error}. Uses APINavigator_DeleteNavigatorViewID."
         );
+        #endif  // TAPIR_HAS_NAVIGATOR_API
         err |= RegisterCommand<BulkChangePropertyGroupsCommand> (
             bulkCommands, "0.1.0",
             "Create / rename / delete property groups. Input payload: {updates: [{op: 'create', name, description?} | {op: 'change', guid, name?, description?} | {op: 'delete', guid}]}. Output payload: {results: [{index, op, guid?, name?, ok, error}], updated_count, errors_count}. One undo barrier for the whole batch."
