@@ -237,6 +237,28 @@ public:
     virtual GS::ObjectState Execute (const GS::ObjectState& parameters, GS::ProcessControl& processControl) const override;
 };
 
+class BulkGetPropertyDefinitionsCommand : public CommandBase
+{
+public:
+    BulkGetPropertyDefinitionsCommand ();
+
+    virtual GS::String GetName () const override;
+    virtual GS::Optional<GS::UniString> GetInputParametersSchema () const override;
+    virtual GS::Optional<GS::UniString> GetRawResponseSchema () const override;
+    virtual GS::ObjectState Execute (const GS::ObjectState& parameters, GS::ProcessControl& processControl) const override;
+};
+
+class BulkChangePropertyDefinitionsCommand : public CommandBase
+{
+public:
+    BulkChangePropertyDefinitionsCommand ();
+
+    virtual GS::String GetName () const override;
+    virtual GS::Optional<GS::UniString> GetInputParametersSchema () const override;
+    virtual GS::Optional<GS::UniString> GetRawResponseSchema () const override;
+    virtual GS::ObjectState Execute (const GS::ObjectState& parameters, GS::ProcessControl& processControl) const override;
+};
+
 class BulkGetIFCPropertiesCommand : public CommandBase
 {
 public:
