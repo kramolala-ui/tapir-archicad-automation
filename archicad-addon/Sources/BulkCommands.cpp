@@ -7969,6 +7969,7 @@ GS::ObjectState BulkValidatePropertyDefinitionsCommand::Execute (
     out["with_expression"]       = withExpr;
     out["valid_count"]           = valid;
     out["invalid_count"]         = invalid;
+    out["unverifiable_count"]    = unverifiable;
     out["skipped_no_expression"] = skipped;
 
     std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
