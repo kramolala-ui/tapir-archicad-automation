@@ -7629,6 +7629,13 @@ GS::ObjectState BulkRemoveIFCPropertiesCommand::Execute (
 
 #endif  // TAPIR_HAS_EXTENDED_BULK
 
+#endif  // TAPIR_HAS_PROJECT_DIFF
+
+#if TAPIR_HAS_EXTENDED_BULK
+
+// (property + IFC commands уже под своим guard'ом выше — этот блок для
+// тех, кого раньше вырезал TAPIR_HAS_EXTENDED_BULK)
+
 BulkSetElementDataCommand::BulkSetElementDataCommand () :
     CommandBase (CommonSchema::Used)
 {
