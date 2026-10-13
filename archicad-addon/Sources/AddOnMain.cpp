@@ -1483,6 +1483,26 @@ GSErrCode Initialize (void)
             bulkCommands, "0.1.0",
             "(experimental) Mass-read only API_Elem_Head fields for a list of guids. Input payload: {elements: [guids]}. Output payload: {rows: [{elementId, modiStamp, type, floorInd, layer, groupGuid, hotlinkGuid, hasMemo, userId, renovationStatus, error}]}. No memo, no properties, no mesh - ~0.05-0.1 ms/element. Companion to BulkGetProjectDiff and fallback for change detection when a diff state file is not available."
         );
+        err |= RegisterCommand<BulkCreatePropertyDefinitionsCommand> (
+            bulkCommands, "0.1.0",
+            "Bulk-create user property definitions (project-wide). Input payload: {definitions: [{name, description?, group_name?, value_type: 'real'|'int'|'string'|'bool'|'guid', measure_type?: 'default'|'length'|'area'|'volume'|'angle', can_value_be_editable?, default_value?}]}. Groups are created/reused by name. Output payload: {created: [{index, guid, name, group_guid, error}], created_count, errors_count}. One undo barrier for the whole batch."
+        );
+        err |= RegisterCommand<BulkDeletePropertyDefinitionsCommand> (
+            bulkCommands, "0.1.0",
+            "Bulk-delete user property definitions (project-wide, removes all values too). Input payload: {guids: [prop-guid, ...]}. Output payload: {deleted: [{guid, ok, error}], deleted_count, errors_count}. One undo barrier for the whole batch."
+        );
+        err |= RegisterCommand<BulkGetIFCPropertiesCommand> (
+            bulkCommands, "0.1.0",
+            "Read IFC properties of many elements. Input payload: {elements: [guids]}. Output payload: {rows: [{elementId, properties: [{propertySetName, propertyName, propertyDescription, propertyType: 'single'|'bounded'|'list'|'enumerated'|'table', readOnly, value, valueType, primitiveType}], error}]}. Only single-value properties carry a value; other IFC property types are listed without a value for now."
+        );
+        err |= RegisterCommand<BulkSetIFCPropertiesCommand> (
+            bulkCommands, "0.1.0",
+            "Bulk set (create or update) IFC properties on elements. Input payload: {updates: [{element_guid, property_set_name, property_name, value, value_type?: 'IfcLabel'|'IfcReal'|'IfcInteger'|'IfcBoolean'|..., primitive_type?: 'string'|'real'|'integer'|'boolean'|'logical', property_description?}]}. Single-value IFC properties only. Output payload: {applied: [{element_guid, property_set_name, property_name, ok, error}], applied_count, errors_count}. One undo barrier for the whole batch."
+        );
+        err |= RegisterCommand<BulkRemoveIFCPropertiesCommand> (
+            bulkCommands, "0.1.0",
+            "Bulk remove IFC properties from elements. Input payload: {removals: [{element_guid, property_set_name, property_name}]}. Output payload: {removed: [{element_guid, property_set_name, property_name, ok, error}], removed_count, errors_count}. One undo barrier for the whole batch."
+        );
         AddCommandGroup (bulkCommands);
     }
 
