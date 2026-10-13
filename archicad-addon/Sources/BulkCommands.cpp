@@ -6508,13 +6508,26 @@ GS::ObjectState BulkCreatePropertyDefinitionsCommand::Execute (
                     const std::string displayStr = ev.value ("display", keyStr);
                     if (keyStr.empty () && displayStr.empty ()) continue;
 
-                    // 1. keyVariant — GUID (требование ACAPI).
-                    //    GS::Guid → API_Guid через GSGuid2APIGuid
-                    //    (reinterpret_cast, API_Guid.hpp:51).
+                    // 1. keyVariant — GUID. Клиент передаёт 'key' как
+                    //    детерминированный UUID (uuid5 от логического
+                    //    имени, см. Python-сторону). Если 'key' — валидная
+                    //    UUID-строка, парсим её (тогда клиент знает свой
+                    //    key заранее, без nonLocalizedValue). Иначе —
+                    //    Generate(): получим случайный GUID, клиент
+                    //    матчит по displayVariant.
                     API_SingleEnumerationVariant v;
                     v.keyVariant.type = API_PropertyGuidValueType;
                     GS::Guid guid;
-                    guid.Generate ();
+                    bool haveKeyGuid = false;
+                    if (!keyStr.empty ()) {
+                        const GSErrCode e = guid.ConvertFromString (keyStr.c_str ());
+                        if (e == NoError && !guid.IsNull ()) {
+                            haveKeyGuid = true;
+                        }
+                    }
+                    if (!haveKeyGuid) {
+                        guid.Generate ();
+                    }
                     v.keyVariant.guidValue = GSGuid2APIGuid (guid);
 
                     // 2. displayVariant — что видит пользователь.
