@@ -4,6 +4,18 @@
 
 #include <memory>
 
+// 2026-10-13: Команды 2-й/3-й волн (ProjectDiff, ProjectInfo,
+// ElementHeaders, Create/DeletePropertyDefinitions, IFCProperties)
+// используют API, отсутствующий в AC29: сборка CI падала на
+// ACAPI_ElemDifferenceGenerator_* и API_IFCProperty — identifier not
+// found. Вырезаем для 29+, оставляем для AC26/27/28. Расширится при
+// появлении рабочих API в новых версиях.
+#if defined(ServerMainVers_2900)
+#  define TAPIR_HAS_EXTENDED_BULK 0
+#else
+#  define TAPIR_HAS_EXTENDED_BULK 1
+#endif
+
 class CreateElementsCommandBase;
 
 // Bulk commands: бинарный транспорт (msgpack + zstd) поверх JSON-обёртки.
