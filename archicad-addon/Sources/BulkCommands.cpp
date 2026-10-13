@@ -6256,6 +6256,11 @@ GS::ObjectState BulkGetElementHeadersCommand::Execute (
 //       "group_name": "Отопление",   // create-or-reuse by name; empty → no group
 //       "value_type": "real"|"int"|"string"|"bool"|"guid",
 //       "measure_type": "default"|"length"|"area"|"volume"|"angle",
+//       "collection_type": "single"|"single_enum"|"multi_enum",  // default single
+//       "possible_enum_values": [                               // обязателен для enum
+//         { "key": "mineral_wool", "display": "Минеральная вата" },
+//         { "key": "penoplex",     "display": "Пеноплэкс" }
+//       ],
 //       "can_value_be_editable": true,
 //       "default_value": <scalar> (optional)
 //     }, ... ] }
