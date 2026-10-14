@@ -577,18 +577,3 @@ public:
     virtual GS::Optional<GS::UniString> GetRawResponseSchema () const override;
     virtual GS::ObjectState Execute (const GS::ObjectState& parameters, GS::ProcessControl& processControl) const override;
 };
-// 2026-10-14: Library Part (GDL) — создание/перезапись объекта в Embedded Library.
-// Текстовые секции (GDL-скрипты): 1DSC, 2DSC, 3DSC, UISC, CTXT, KWRD,
-// CPYR, PRSC, VLSC, FMSC, BMSC. Бинарные секции (2DDR, 3DBN, PARD)
-// пока не поддержаны — отложены до следующей волны.
-// Вне TAPIR_HAS_EXTENDED_BULK — LibPart API есть во всех AC25..AC30.
-class BulkCreateLibPartCommand : public CommandBase
-{
-public:
-    BulkCreateLibPartCommand ();
-
-    virtual GS::String GetName () const override;
-    virtual GS::Optional<GS::UniString> GetInputParametersSchema () const override;
-    virtual GS::Optional<GS::UniString> GetRawResponseSchema () const override;
-    virtual GS::ObjectState Execute (const GS::ObjectState& parameters, GS::ProcessControl& processControl) const override;
-};
