@@ -8400,9 +8400,8 @@ GS::ObjectState BulkCreateViewMapFolderCommand::Execute (
         prevPtr  = (void*)&prevGuid;
     }
 
-    GSErrCode apiErr = ACAPI_Navigator (
-        APINavigator_NewNavigatorViewID,
-        &navItem, nullptr, parentPtr, prevPtr);
+    GSErrCode apiErr = ACAPI_Navigator_NewNavigatorView (
+        &navItem, nullptr, static_cast<GS::Guid*> (parentPtr), static_cast<GS::Guid*> (prevPtr));
 
     nlohmann::ordered_json out;
     if (apiErr == NoError) {
@@ -8810,9 +8809,8 @@ GS::ObjectState BulkCreateLayoutSubsetCommand::Execute (
         prevPtr  = (void*)&prevGuid;
     }
 
-    GSErrCode apiErr = ACAPI_Navigator (
-        APINavigator_NewNavigatorViewID,
-        &navItem, nullptr, parentPtr, prevPtr);
+    GSErrCode apiErr = ACAPI_Navigator_NewNavigatorView (
+        &navItem, nullptr, static_cast<GS::Guid*> (parentPtr), static_cast<GS::Guid*> (prevPtr));
 
     nlohmann::ordered_json out;
     if (apiErr == NoError) {
