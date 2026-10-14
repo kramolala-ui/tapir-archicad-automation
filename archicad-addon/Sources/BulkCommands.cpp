@@ -8664,13 +8664,20 @@ GS::ObjectState BulkGetNavigatorItemsCommand::Execute (
         if (parentItem.guid == APINULLGuid) {
             return CreateErrorResponse (APIERR_BADPARS, "invalid parent_guid");
         }
-        // При чтении children у известного item'а mapId берётся из самого item.
-        // Заполним явно — API использует его как фильтр.
-        parentItem.mapId = static_cast<API_NavigatorMapID> (mapId);
+        if (ACAPI_Navigator_GetNavigatorItem (&parentItem.guid, &parentItem) != NoError) {
+            return CreateErrorResponse (APIERR_BADPARS, "GetNavigatorItem failed for parent_guid");
+        }
     } else {
-        // Корневые items для заданного map.
-        parentItem.mapId    = static_cast<API_NavigatorMapID> (mapId);
-        parentItem.itemType = API_UndefinedNavItem;
+        API_NavigatorSet navSet = {};
+        navSet.mapId = static_cast<API_NavigatorMapID> (mapId);
+        Int32 idx = 0;
+        GSErrCode setErr = ACAPI_Navigator_GetNavigatorSet (&navSet, &idx);
+        if (setErr != NoError) {
+            return CreateErrorResponse (setErr, "GetNavigatorSet failed (bad map_id?)");
+        }
+        if (ACAPI_Navigator_GetNavigatorItem (&navSet.rootGuid, &parentItem) != NoError) {
+            return CreateErrorResponse (APIERR_BADPARS, "GetNavigatorItem failed for root guid");
+        }
     }
 
     GS::Array<API_NavigatorItem> items;
