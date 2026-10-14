@@ -8696,7 +8696,7 @@ GS::ObjectState BulkGetNavigatorItemsCommand::Execute (
             rec["name"]           = GS::UniString (it.uName).ToCStr ().Get ();
             rec["item_type"]      = static_cast<int64_t> (it.itemType);
             rec["item_type_name"] = NavItemTypeName (it.itemType);
-            rec["map_id"]         = static_cast<int64_t> (it.mapId);
+            rec["map_id"]         = static_cast<int64_t> (mapId);
             rec["source_guid"]    = APIGuidToString (it.sourceGuid).ToCStr ().Get ();
             rec["db_type"]        = static_cast<int64_t> (it.db.typeID);
             out["items"].push_back (rec);
