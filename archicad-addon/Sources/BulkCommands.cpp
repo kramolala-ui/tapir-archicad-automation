@@ -8926,10 +8926,22 @@ GS::ObjectState BulkDeleteNavigatorItemCommand::Execute (
         return CreateErrorResponse (APIERR_BADPARS, "invalid guid");
     }
 
-    bool force = true;
-    GSErrCode apiErr = ACAPI_Navigator (
-        APINavigator_DeleteNavigatorViewID,
-        (void*)&guid, (void*)&force);
+    // Определить itemType: layout → DeleteDatabase; subset → not supported; остальное → DeleteNavigatorView.
+    API_NavigatorItem navItem = {};
+    GSErrCode lookupErr = ACAPI_Navigator_GetNavigatorItem (&guid, &navItem);
+    GSErrCode apiErr = NoError;
+    if (lookupErr != NoError) {
+        apiErr = lookupErr;
+    } else if (navItem.itemType == API_LayoutNavItem ||
+               navItem.itemType == API_MasterLayoutNavItem) {
+        API_DatabaseInfo dbInfo = navItem.db;
+        apiErr = ACAPI_Database_DeleteDatabase (&dbInfo);
+    } else if (navItem.itemType == API_SubSetNavItem) {
+        apiErr = APIERR_NOTSUPPORTED;
+    } else {
+        bool silentMode = true;
+        apiErr = ACAPI_Navigator_DeleteNavigatorView (&guid, &silentMode);
+    }
 
     nlohmann::ordered_json out;
     if (apiErr == NoError) {
