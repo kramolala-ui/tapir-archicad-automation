@@ -8681,9 +8681,8 @@ GS::ObjectState BulkGetNavigatorItemsCommand::Execute (
     }
 
     GS::Array<API_NavigatorItem> items;
-    const GSErrCode apiErr = ACAPI_Navigator (
-        APINavigator_GetNavigatorChildrenItemsID,
-        &parentItem, nullptr, &items);
+    const GSErrCode apiErr = ACAPI_Navigator_GetNavigatorChildrenItems (
+        &parentItem, &items);
 
     nlohmann::ordered_json out;
     out["items"] = nlohmann::json::array ();
