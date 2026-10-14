@@ -1558,6 +1558,14 @@ GSErrCode Initialize (void)
             bulkCommands, "0.1.0",
             "Create or overwrite a Library Part (GDL object) in the Embedded Library. Input payload: {name, type: 'object'|'lamp'|'label'|'window'|'door'|'skylight'|'room'|'plan_sign', overwrite?: bool=true, sections: [{type: '1DSC'|'2DSC'|'3DSC'|'UISC'|'VLSC'|'PRSC'|'CTXT'|'KWRD'|'CPYR'|'FMSC'|'BMSC', text: '...'}]}. Output payload: {name, index, created, error}. Uses APIEnv_OverwriteLibPartID to replace an existing LibPart with the same name. Text GDL sections only (binary sections 2DDR/3DBN/PARD deferred)."
         );
+        err |= RegisterCommand<BulkGetLibPartSectionsCommand> (
+            bulkCommands, "0.1.0",
+            "Read all text sections of a Library Part by index. Input payload: {index: int}. Output payload: {index, sections: [{type: '3DSC'|'2DSC'|..., text: '...'}], count, error}. Binary sections (2DDR/3DBN/PARD) are skipped."
+        );
+        err |= RegisterCommand<BulkUpdateLibPartSectionsCommand> (
+            bulkCommands, "0.1.0",
+            "Update specific text sections of an existing Library Part by index. Input payload: {index: int, sections: [{type: '3DSC'|'2DSC'|..., text: '...'}]}. Output payload: {index, updated_count, errors_count, per_section: [{type, ok, error}]}. Uses ACAPI_LibPart_UpdateSection per section. Caller should re-run the LibPart placement to see geometry changes."
+        );
 
         AddCommandGroup (bulkCommands);
     }
