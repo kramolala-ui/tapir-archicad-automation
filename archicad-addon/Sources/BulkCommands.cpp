@@ -9964,9 +9964,9 @@ GS::ObjectState BulkCreateLibPartCommand::Execute (
     }
     libPart.location = loc;
 
-    ACAPI_Environment (APIEnv_OverwriteLibPartID, (void*) (Int32) overwrite, nullptr);
+    ACAPI_Environment (APIEnv_OverwriteLibPartID, (void*) (std::intptr_t) overwrite, nullptr);
     GSErrCode apiErr = ACAPI_LibPart_Create (&libPart);
-    ACAPI_Environment (APIEnv_OverwriteLibPartID, (void*) (Int32) false, nullptr);
+    ACAPI_Environment (APIEnv_OverwriteLibPartID, (void*) (std::intptr_t) 0, nullptr);
 
     if (apiErr != NoError) {
         delete loc;
