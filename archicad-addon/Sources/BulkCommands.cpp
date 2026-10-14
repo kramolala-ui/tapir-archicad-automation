@@ -9771,6 +9771,532 @@ BulkCreateStairsCommand::BulkCreateStairsCommand ()
     : BulkCreateElementsCommandBase ("BulkCreateStairs", std::make_shared<CreateStairsCommand> ()) {}
 
 
+// =====================================================================
+//  Library Part (GDL) commands (2026-10-14)
+//
+//  Создание / чтение / обновление Library Part (GDL-объект) в Embedded
+//  Library. Текстовые GDL-секции (11 типов). Бинарные (2DDR/3DBN/PARD)
+//  отложены до следующей волны.
+//
+//  Эталон — DevKit Examples/LibPart_Test.cpp:
+//    • GetEmbeddedLibraryLocation: APIEnv_GetLibrariesID + embedded index.
+//    • APIEnv_OverwriteLibPartID(true) → LibPart_Create
+//      → APIEnv_OverwriteLibPartID(false).
+//    • NewSection/WriteSection/EndSection на каждую секцию.
+//    • Save + Register.
+// =====================================================================
+
+namespace {
+
+GSType LibPartSectionCodeFromString (const std::string& t)
+{
+    if (t == "1DSC") return API_Sect1DScript;
+    if (t == "2DSC") return API_Sect2DScript;
+    if (t == "3DSC") return API_Sect3DScript;
+    if (t == "UISC") return API_SectUIScript;
+    if (t == "VLSC") return API_SectVLScript;
+    if (t == "PRSC") return API_SectPRScript;
+    if (t == "CTXT") return API_SectComText;
+    if (t == "KWRD") return API_SectKeywords;
+    if (t == "CPYR") return API_SectCopyright;
+    if (t == "FMSC") return API_SectFWMScript;
+    if (t == "BMSC") return API_SectBWMScript;
+    return 0;
+}
+
+std::string LibPartSectionCodeToString (GSType code)
+{
+    if (code == API_Sect1DScript)  return "1DSC";
+    if (code == API_Sect2DScript)  return "2DSC";
+    if (code == API_Sect3DScript)  return "3DSC";
+    if (code == API_SectUIScript)  return "UISC";
+    if (code == API_SectVLScript)  return "VLSC";
+    if (code == API_SectPRScript)  return "PRSC";
+    if (code == API_SectComText)   return "CTXT";
+    if (code == API_SectKeywords)  return "KWRD";
+    if (code == API_SectCopyright) return "CPYR";
+    if (code == API_SectFWMScript) return "FMSC";
+    if (code == API_SectBWMScript) return "BMSC";
+    return "";
+}
+
+API_LibTypeID LibPartTypeFromString (const std::string& t)
+{
+    if (t == "object")    return APILib_ObjectID;
+    if (t == "lamp")      return APILib_LampID;
+    if (t == "label")     return APILib_LabelID;
+    if (t == "window")    return APILib_WindowID;
+    if (t == "door")      return APILib_DoorID;
+    if (t == "skylight")  return APILib_SkylightID;
+    if (t == "room")      return APILib_RoomID;
+    if (t == "plan_sign") return APILib_PlanSignID;
+    return API_ZombieLibID;
+}
+
+GSErrCode GetEmbeddedLibraryLocation (IO::Location*& loc)
+{
+    loc = nullptr;
+    GS::Array<API_LibraryInfo> libInfo;
+    Int32 embeddedLibraryIndex = -1;
+    GSErrCode err = ACAPI_Environment (APIEnv_GetLibrariesID, &libInfo, &embeddedLibraryIndex);
+    if (err != NoError || embeddedLibraryIndex < 0 ||
+        embeddedLibraryIndex >= static_cast<Int32> (libInfo.GetSize ())) {
+        return APIERR_GENERAL;
+    }
+    try {
+        loc = new IO::Location (libInfo[embeddedLibraryIndex].location);
+    } catch (...) {
+        return APIERR_MEMFULL;
+    }
+    return loc != nullptr ? NoError : APIERR_MEMFULL;
+}
+
+}  // namespace
+
+
+// ---------------------------------------------------------------------
+//  BulkCreateLibPartCommand
+// ---------------------------------------------------------------------
+
+BulkCreateLibPartCommand::BulkCreateLibPartCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkCreateLibPartCommand::GetName () const
+{
+    return "BulkCreateLibPart";
+}
+
+GS::Optional<GS::UniString> BulkCreateLibPartCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkCreateLibPartCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string" },
+            "name":        { "type": "string" },
+            "index":       { "type": "integer" },
+            "created":     { "type": "boolean" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkCreateLibPartCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+    if (compression.empty ()) compression = "none";
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    std::string name;
+    std::string typeStr = "object";
+    bool overwrite = true;
+    struct Section { std::string type; std::string text; };
+    std::vector<Section> sections;
+    try {
+        nlohmann::json j = nlohmann::json::from_msgpack (raw);
+        name      = j.value ("name", "");
+        typeStr   = j.value ("type", "object");
+        overwrite = j.value ("overwrite", true);
+        if (j.contains ("sections") && j["sections"].is_array ()) {
+            for (const auto& s : j["sections"]) {
+                if (!s.is_object ()) continue;
+                Section sec;
+                sec.type = s.value ("type", "");
+                sec.text = s.value ("text", "");
+                if (!sec.type.empty ()) sections.push_back (sec);
+            }
+        }
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+    if (name.empty ()) {
+        return CreateErrorResponse (APIERR_BADPARS, "name is required");
+    }
+    API_LibTypeID typeID = LibPartTypeFromString (typeStr);
+    if (typeID == API_ZombieLibID) {
+        const std::string msg = "unknown lib type: " + typeStr;
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+
+    API_LibPart libPart;
+    BNZeroMemory (&libPart, sizeof (API_LibPart));
+    libPart.typeID      = typeID;
+    libPart.isTemplate  = false;
+    libPart.isPlaceable = true;
+    GS::UniString nameUs (name.c_str ());
+    GS::UCopy (nameUs.ToUStr (), libPart.docu_UName);
+
+    IO::Location* loc = nullptr;
+    GSErrCode locErr = GetEmbeddedLibraryLocation (loc);
+    if (locErr != NoError || loc == nullptr) {
+        delete loc;
+        return CreateErrorResponse (locErr, "failed to get embedded library location");
+    }
+    libPart.location = loc;
+
+    ACAPI_Environment (APIEnv_OverwriteLibPartID, (void*) (Int32) overwrite, nullptr);
+    GSErrCode apiErr = ACAPI_LibPart_Create (&libPart);
+    ACAPI_Environment (APIEnv_OverwriteLibPartID, (void*) (Int32) false, nullptr);
+
+    if (apiErr != NoError) {
+        delete loc;
+        libPart.location = nullptr;
+        return CreateErrorResponse (apiErr, "LibPart_Create failed");
+    }
+
+    for (const Section& sec : sections) {
+        GSType code = LibPartSectionCodeFromString (sec.type);
+        if (code == 0) continue;
+        API_LibPartSection section;
+        BNZeroMemory (&section, sizeof (API_LibPartSection));
+        section.sectType = code;
+        ACAPI_LibPart_NewSection (&section);
+        if (!sec.text.empty ()) {
+            ACAPI_LibPart_WriteSection (
+                static_cast<Int32> (sec.text.size ()),
+                static_cast<GSConstPtr> (sec.text.data ()));
+        }
+        ACAPI_LibPart_EndSection ();
+    }
+
+    apiErr = ACAPI_LibPart_Save (&libPart);
+    if (apiErr == NoError) {
+        apiErr = ACAPI_LibPart_Register (&libPart);
+    }
+
+    const bool ok = (apiErr == NoError);
+    const Int32 outIndex = ok ? static_cast<Int32> (libPart.index) : -1;
+
+    nlohmann::ordered_json out;
+    out["name"]    = name;
+    out["index"]   = outIndex;
+    out["created"] = ok;
+    if (ok) {
+        out["error"] = nullptr;
+    } else {
+        out["error"] = std::string ("LibPart save/register failed: ") +
+                       std::to_string (static_cast<long long> (apiErr));
+    }
+
+    delete loc;
+    libPart.location = nullptr;
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 = EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64", GS::UniString (outB64.c_str ()));
+    response.Add ("compression", GS::UniString (outCompression.c_str ()));
+    response.Add ("name",        GS::UniString (name.c_str ()));
+    response.Add ("index",       outIndex);
+    response.Add ("created",     ok);
+    return response;
+}
+
+
+// ---------------------------------------------------------------------
+//  BulkGetLibPartSectionsCommand
+// ---------------------------------------------------------------------
+
+BulkGetLibPartSectionsCommand::BulkGetLibPartSectionsCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkGetLibPartSectionsCommand::GetName () const
+{
+    return "BulkGetLibPartSections";
+}
+
+GS::Optional<GS::UniString> BulkGetLibPartSectionsCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkGetLibPartSectionsCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string" },
+            "index":       { "type": "integer" },
+            "count":       { "type": "integer" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkGetLibPartSectionsCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+    if (compression.empty ()) compression = "none";
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    Int32 libIndex = -1;
+    try {
+        nlohmann::json j = nlohmann::json::from_msgpack (raw);
+        libIndex = j.value ("index", -1);
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+    if (libIndex <= 0) {
+        return CreateErrorResponse (APIERR_BADPARS, "index is required (positive int)");
+    }
+
+    Int32 nSection = 0;
+    API_LibPartSection** sections = nullptr;
+    GSErrCode apiErr = ACAPI_LibPart_GetSectionList (libIndex, &nSection, &sections);
+
+    nlohmann::ordered_json out;
+    out["sections"] = nlohmann::json::array ();
+    out["index"]    = libIndex;
+
+    if (apiErr != NoError) {
+        out["count"] = 0;
+        out["error"] = std::string ("GetSectionList failed: ") +
+                       std::to_string (static_cast<long long> (apiErr));
+    } else {
+        int written = 0;
+        for (Int32 i = 0; i < nSection; ++i) {
+            if (sections == nullptr) break;
+            API_LibPartSection* sec = sections[i];
+            if (sec == nullptr) continue;
+            std::string typeName = LibPartSectionCodeToString (sec->sectType);
+            if (typeName.empty ()) continue;
+
+            API_LibPartSection secCopy = *sec;
+            GS::UniString sectionStr;
+            GSErrCode ge = ACAPI_LibPart_GetSection (
+                libIndex, &secCopy, nullptr, &sectionStr, nullptr);
+
+            nlohmann::ordered_json rec;
+            rec["type"] = typeName;
+            if (ge == NoError) {
+                rec["text"] = std::string (sectionStr.ToCStr ().Get ());
+            } else {
+                rec["text"]  = "";
+                rec["error"] = std::string ("GetSection failed: ") +
+                               std::to_string (static_cast<long long> (ge));
+            }
+            out["sections"].push_back (rec);
+            ++written;
+        }
+        out["count"] = written;
+        out["error"] = nullptr;
+        if (sections != nullptr) {
+            BMKillHandle (reinterpret_cast<GSHandle*> (&sections));
+        }
+    }
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 = EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64", GS::UniString (outB64.c_str ()));
+    response.Add ("compression", GS::UniString (outCompression.c_str ()));
+    response.Add ("index",       libIndex);
+    response.Add ("count",       static_cast<Int32> (out["count"].get<int> ()));
+    return response;
+}
+
+
+// ---------------------------------------------------------------------
+//  BulkUpdateLibPartSectionsCommand
+// ---------------------------------------------------------------------
+
+BulkUpdateLibPartSectionsCommand::BulkUpdateLibPartSectionsCommand () :
+    CommandBase (CommonSchema::Used)
+{
+}
+
+GS::String BulkUpdateLibPartSectionsCommand::GetName () const
+{
+    return "BulkUpdateLibPartSections";
+}
+
+GS::Optional<GS::UniString> BulkUpdateLibPartSectionsCommand::GetInputParametersSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64": { "type": "string" },
+            "compression": { "type": "string", "enum": [ "none", "zstd" ] }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64" ]
+    })";
+}
+
+GS::Optional<GS::UniString> BulkUpdateLibPartSectionsCommand::GetRawResponseSchema () const
+{
+    return R"({
+        "type": "object",
+        "properties": {
+            "payload_b64":  { "type": "string" },
+            "compression":  { "type": "string" },
+            "index":        { "type": "integer" },
+            "updated_count": { "type": "integer" },
+            "errors_count":  { "type": "integer" }
+        },
+        "additionalProperties": false,
+        "required": [ "payload_b64", "compression" ]
+    })";
+}
+
+GS::ObjectState BulkUpdateLibPartSectionsCommand::Execute (
+    const GS::ObjectState& parameters,
+    GS::ProcessControl& /*processControl*/) const
+{
+    GS::UniString payloadB64;
+    if (!parameters.Get ("payload_b64", payloadB64)) {
+        return CreateErrorResponse (APIERR_BADPARS, "payload_b64 is missing");
+    }
+    GS::UniString compressionUs;
+    parameters.Get ("compression", compressionUs);
+    std::string compression = compressionUs.ToCStr ().Get ();
+    if (compression.empty ()) compression = "none";
+
+    std::vector<uint8_t> raw;
+    std::string err;
+    if (!DecodeEnvelope (payloadB64, compression, raw, err)) {
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (err.c_str ()));
+    }
+
+    Int32 libIndex = -1;
+    struct Section { std::string type; std::string text; };
+    std::vector<Section> sections;
+    try {
+        nlohmann::json j = nlohmann::json::from_msgpack (raw);
+        libIndex = j.value ("index", -1);
+        if (j.contains ("sections") && j["sections"].is_array ()) {
+            for (const auto& s : j["sections"]) {
+                if (!s.is_object ()) continue;
+                Section sec;
+                sec.type = s.value ("type", "");
+                sec.text = s.value ("text", "");
+                if (!sec.type.empty ()) sections.push_back (sec);
+            }
+        }
+    } catch (const std::exception& e) {
+        const std::string msg = std::string ("msgpack decode failed: ") + e.what ();
+        return CreateErrorResponse (APIERR_BADPARS, GS::UniString (msg.c_str ()));
+    }
+    if (libIndex <= 0) {
+        return CreateErrorResponse (APIERR_BADPARS, "index is required (positive int)");
+    }
+    if (sections.empty ()) {
+        return CreateErrorResponse (APIERR_BADPARS, "sections[] is empty");
+    }
+
+    nlohmann::ordered_json out;
+    out["per_section"]   = nlohmann::json::array ();
+    out["index"]         = libIndex;
+    out["updated_count"] = 0;
+    out["errors_count"]  = 0;
+
+    size_t updatedCount = 0;
+    size_t errorsCount  = 0;
+    for (const Section& sec : sections) {
+        GSType code = LibPartSectionCodeFromString (sec.type);
+        nlohmann::ordered_json rec;
+        rec["type"] = sec.type;
+        rec["ok"]   = false;
+        if (code == 0) {
+            rec["error"] = "unknown section type";
+            out["per_section"].push_back (rec);
+            ++errorsCount;
+            continue;
+        }
+        API_LibPartSection section;
+        BNZeroMemory (&section, sizeof (API_LibPartSection));
+        section.sectType = code;
+        GS::UniString textUs (sec.text.c_str ());
+        GSErrCode ue = ACAPI_LibPart_UpdateSection (
+            libIndex, &section, nullptr, &textUs, nullptr);
+        if (ue == NoError) {
+            rec["ok"] = true;
+            ++updatedCount;
+        } else {
+            rec["error"] = std::string ("UpdateSection failed: ") +
+                           std::to_string (static_cast<long long> (ue));
+            ++errorsCount;
+        }
+        out["per_section"].push_back (rec);
+    }
+
+    out["updated_count"] = static_cast<int64_t> (updatedCount);
+    out["errors_count"]  = static_cast<int64_t> (errorsCount);
+
+    std::vector<uint8_t> outBytes = nlohmann::json::to_msgpack (out);
+    std::string outCompression;
+    const std::string outB64 = EncodeEnvelope (outBytes.data (), outBytes.size (), outCompression);
+
+    GS::ObjectState response;
+    response.Add ("payload_b64",   GS::UniString (outB64.c_str ()));
+    response.Add ("compression",   GS::UniString (outCompression.c_str ()));
+    response.Add ("index",         libIndex);
+    response.Add ("updated_count", static_cast<Int64> (updatedCount));
+    response.Add ("errors_count",  static_cast<Int64> (errorsCount));
+    return response;
+}
+
+
 // ---------------------------------------------------------------------
 //  BulkCreateLibPartCommand (2026-10-14)
 // ---------------------------------------------------------------------
