@@ -8515,9 +8515,8 @@ GS::ObjectState BulkCloneProjectMapToViewMapCommand::Execute (
     }
 
     API_Guid createdGuid = APINULLGuid;
-    GSErrCode apiErr = ACAPI_Navigator (
-        APINavigator_CloneProjectMapItemToViewMapID,
-        (void*)&sourceGuid, (void*)&parentGuid, (void*)&createdGuid);
+    GSErrCode apiErr = ACAPI_Navigator_CloneProjectMapItemToViewMap (
+        &sourceGuid, &parentGuid, &createdGuid);
 
     nlohmann::ordered_json out;
     if (apiErr == NoError && createdGuid != APINULLGuid) {
